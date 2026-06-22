@@ -733,7 +733,19 @@ function createStore(pool = createPool()) {
     if (new Date(campaign.start_at).getTime() > now || new Date(campaign.end_at).getTime() < now) {
       throw appError(404, "活动不在有效期内");
     }
+    campaign.purchased_count = 0;
+    campaign.remaining_user_limit = campaign.per_user_limit ? Number(campaign.per_user_limit) : 0;
     if (userId) {
+      const purchased = await one(pool, `
+        SELECT COALESCE(SUM(o.quantity), 0) total
+        FROM acquisition_orders ao
+        JOIN orders o ON o.id = ao.order_id
+        WHERE ao.campaign_id = :campaignId AND o.user_id = :userId AND o.status IN ('paid','shipped','received')
+      `, { campaignId: campaign.id, userId: Number(userId) });
+      campaign.purchased_count = Number(purchased?.total || 0);
+      campaign.remaining_user_limit = campaign.per_user_limit
+        ? Math.max(0, Number(campaign.per_user_limit) - campaign.purchased_count)
+        : 0;
       campaign.relation = campaign.relation_mode === "activity_visit"
         ? await lockAcquisitionRelation(pool, campaign, Number(userId), scene, "visit")
         : await acquisitionRelationSnapshot(pool, campaign, Number(userId), scene, "visit");
