@@ -1,4 +1,4 @@
-﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 640" role="img" aria-label="必火次元 KaiLcY 草稿风 logo">
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 640" role="img" aria-label="必火次元 BiHuoCY 草稿风 logo">
   <defs>
     <linearGradient id="paper" x1="58" y1="44" x2="1700" y2="602" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#FAFBF7"/>
@@ -44,7 +44,7 @@
           font-weight="700"
           fill="#233755"
           letter-spacing="1"
-          filter="url(#rough)">KaiLcY</text>
+          filter="url(#rough)">BiHuoCY</text>
   </g>
 
   <text x="690" y="337"
@@ -63,7 +63,7 @@
         font-family="Ink Free, Segoe Script, Comic Sans MS, Microsoft YaHei UI, sans-serif"
         font-size="52"
         font-weight="700"
-        fill="#233755">KaiLcY Collection</text>
+        fill="#233755">BiHuoCY Collection</text>
 
   <circle cx="1526" cy="340" r="50" fill="#FFF05A" opacity=".92"/>
   <circle cx="1646" cy="250" r="33" fill="#FF3BA7" opacity=".9"/>
