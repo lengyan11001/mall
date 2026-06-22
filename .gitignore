@@ -12,3 +12,6 @@ compiled-*.zip
 deploy/*.tar.gz
 deploy/*.zip
 deploy/*.png
+.cache/
+.fontconfig/
+.npm/
