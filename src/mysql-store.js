@@ -1,4 +1,4 @@
-﻿const mysql = require("mysql2/promise");
+const mysql = require("mysql2/promise");
 const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");

@@ -1,4 +1,4 @@
-﻿const crypto = require("crypto");
+const crypto = require("crypto");
 const fs = require("fs");
 const https = require("https");
 const { URL } = require("url");

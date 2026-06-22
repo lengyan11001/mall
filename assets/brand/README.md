@@ -1,4 +1,4 @@
-﻿# 必火次元品牌资产
+# 必火次元品牌资产
 
 - `happy-dimension-avatar.svg`：小程序头像源文件，适合方形头像。
 - `happy-dimension-logo.svg`：横版 logo 源文件，适合后台、海报和页面头部。

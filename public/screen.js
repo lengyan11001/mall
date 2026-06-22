@@ -1,4 +1,4 @@
-﻿const $ = selector => document.querySelector(selector);
+const $ = selector => document.querySelector(selector);
 
 function formatMoney(value) {
   return `¥${Number(value || 0).toFixed(2)}`;
