@@ -1,0 +1,719 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>必火次元管理后台</title>
+    <link rel="stylesheet" href="/styles.css?v=20260613-screen1" />
+  </head>
+  <body>
+    <div class="admin-login-layer open" id="admin-login-layer">
+      <form class="admin-login-card" id="admin-login-form">
+        <div>
+          <h1>必火次元后台</h1>
+          <p>登录后进入商品、拓客宝和订单管理</p>
+        </div>
+        <label class="field">
+          <span>用户名</span>
+          <input class="input" id="admin-login-user" autocomplete="username" />
+        </label>
+        <label class="field">
+          <span>密码</span>
+          <input class="input" id="admin-login-password" type="password" autocomplete="current-password" />
+        </label>
+        <button class="btn" type="submit">登录</button>
+      </form>
+    </div>
+
+    <div class="admin-shell">
+      <aside class="admin-sidebar">
+        <div class="admin-brand">
+          <strong>必火次元后台</strong>
+          <span>Vue/Element 目标形态的原型实现</span>
+        </div>
+        <nav class="admin-nav" aria-label="后台导航">
+          <button class="active" data-admin-tab="dashboard"><span class="slot-icon" data-icon="chart"></span> 数据看板</button>
+          <button data-admin-tab="products"><span class="slot-icon" data-icon="shop"></span> 商品管理</button>
+          <button data-admin-tab="acquisition"><span class="slot-icon" data-icon="share"></span> 拓客宝</button>
+          <button data-admin-tab="orders"><span class="slot-icon" data-icon="order"></span> 订单管理</button>
+          <button data-admin-tab="distributors"><span class="slot-icon" data-icon="users"></span> 分销管理</button>
+          <button data-admin-tab="withdrawals"><span class="slot-icon" data-icon="wallet"></span> 提现审核</button>
+          <button data-admin-tab="settings"><span class="slot-icon" data-icon="settings"></span> 系统设置</button>
+        </nav>
+      </aside>
+
+      <main class="admin-main">
+        <header class="admin-topbar">
+          <div>
+            <h1 id="admin-title">数据看板</h1>
+            <p id="admin-subtitle">销售额、订单量、用户增长和分销表现</p>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <a class="btn secondary" href="/screen.html" target="_blank"><span class="slot-icon" data-icon="chart"></span> 公开大屏</a>
+            <a class="btn ghost" href="/"><span class="slot-icon" data-icon="home"></span> 用户端</a>
+            <button class="btn secondary" id="admin-refresh"><span class="slot-icon" data-icon="refresh"></span> 刷新</button>
+            <button class="btn ghost" id="admin-logout">退出</button>
+          </div>
+        </header>
+
+        <section id="admin-dashboard" class="admin-view active">
+          <div class="metric-grid" id="metric-grid"></div>
+          <div class="admin-grid">
+            <section class="card">
+              <div class="card-head"><h2>最近订单</h2></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>订单</th><th>客户</th><th>商品</th><th>金额</th><th>状态</th></tr>
+                  </thead>
+                  <tbody id="recent-orders"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-head"><h2>分销员排行</h2></div>
+              <div class="list" id="top-distributors"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="admin-products" class="admin-view">
+          <div id="product-overview">
+            <div class="toolbar">
+              <button class="btn" id="new-product"><span class="slot-icon" data-icon="plus"></span> 新增商品</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>商品</th><th>分类</th><th>价格</th><th>库存</th><th>佣金</th><th>状态</th><th>操作</th></tr>
+                </thead>
+                <tbody id="product-table"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card product-editor-card hidden" id="product-editor">
+            <div class="product-editor-head">
+              <div>
+                <button class="btn secondary compact" id="back-product-list" type="button">返回列表</button>
+                <h2 id="product-editor-title">新增商品</h2>
+              </div>
+              <div class="product-editor-actions">
+                <button class="btn compact" id="save-product" type="button">保存商品</button>
+              </div>
+            </div>
+            <div class="product-editor-tabs" role="tablist" aria-label="商品编辑步骤">
+              <button type="button" class="active" data-product-section="base">基础资料</button>
+              <button type="button" data-product-section="media">图片素材</button>
+              <button type="button" data-product-section="detail">商品详情</button>
+            </div>
+            <form class="product-form-shell" id="product-form">
+              <input type="hidden" id="product-id" />
+              <section class="product-section active" data-product-panel="base">
+                <div class="form-grid product-editor-form">
+                  <label class="field wide">
+                    <span>商品标题</span>
+                    <input class="input" id="product-title" required />
+                  </label>
+                  <label class="field wide">
+                    <span>卖点描述</span>
+                    <input class="input" id="product-subtitle" />
+                  </label>
+                  <label class="field">
+                    <span>商品编码</span>
+                    <input class="input" id="product-no" />
+                  </label>
+                  <label class="field">
+                    <span>条形码</span>
+                    <input class="input" id="product-barcode" />
+                  </label>
+                  <label class="field">
+                    <span>分类</span>
+                    <input class="input" id="product-category" required />
+                  </label>
+                  <label class="field">
+                    <span>品牌</span>
+                    <input class="input" id="product-brand" />
+                  </label>
+                  <label class="field">
+                    <span>单位</span>
+                    <input class="input" id="product-unit" />
+                  </label>
+                  <label class="field">
+                    <span>状态</span>
+                    <select class="select" id="product-status">
+                      <option value="on">上架</option>
+                      <option value="off">下架</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>零售价</span>
+                    <input class="input" id="product-market-price" type="number" min="0" step="0.01" />
+                  </label>
+                  <label class="field">
+                    <span>销售价</span>
+                    <input class="input" id="product-price" type="number" min="0" step="0.01" required />
+                  </label>
+                  <label class="field">
+                    <span>成本价</span>
+                    <input class="input" id="product-cost-price" type="number" min="0" step="0.01" />
+                  </label>
+                  <label class="field">
+                    <span>库存</span>
+                    <input class="input" id="product-stock" type="number" min="0" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>佣金比例</span>
+                    <input class="input" id="product-commission" type="number" min="0" max="1" step="0.01" required />
+                  </label>
+                  <label class="field">
+                    <span>重量 KG</span>
+                    <input class="input" id="product-weight" type="number" min="0" step="0.001" />
+                  </label>
+                  <label class="field">
+                    <span>最低购买量</span>
+                    <input class="input" id="product-min-buy" type="number" min="1" step="1" />
+                  </label>
+                  <label class="field">
+                    <span>每单限购</span>
+                    <input class="input" id="product-order-limit" type="number" min="0" step="1" />
+                  </label>
+                  <label class="field">
+                    <span>每人限购</span>
+                    <input class="input" id="product-user-limit" type="number" min="0" step="1" />
+                  </label>
+                  <label class="field wide">
+                    <span>简短描述</span>
+                    <textarea class="textarea" id="product-description"></textarea>
+                  </label>
+                  <label class="field" style="display:flex; align-items:center; gap:10px;">
+                    <input id="product-virtual" type="checkbox" style="width:18px; height:18px;" />
+                    <span>虚拟商品</span>
+                  </label>
+                  <label class="field" style="display:flex; align-items:center; gap:10px;">
+                    <input id="product-no-refund" type="checkbox" style="width:18px; height:18px;" />
+                    <span>付款后不支持退款</span>
+                  </label>
+                </div>
+              </section>
+              <section class="product-section" data-product-panel="media">
+                <div class="product-media-layout">
+                  <label class="field">
+                    <span>商品图片 URL（每行一张）</span>
+                    <textarea class="textarea" id="product-images"></textarea>
+                  </label>
+                  <div class="product-image-preview" id="product-image-preview"></div>
+                </div>
+              </section>
+              <section class="product-section" data-product-panel="detail">
+                <textarea class="hidden" id="product-detail"></textarea>
+                <div class="rich-editor">
+                  <div class="rich-toolbar">
+                    <button type="button" data-rich-command="bold" title="加粗"><strong>B</strong></button>
+                    <button type="button" data-rich-command="italic" title="斜体"><em>I</em></button>
+                    <button type="button" data-rich-command="underline" title="下划线"><u>U</u></button>
+                    <button type="button" data-rich-command="formatBlock" data-rich-value="h2" title="标题">H2</button>
+                    <button type="button" data-rich-command="formatBlock" data-rich-value="p" title="正文">P</button>
+                    <button type="button" data-rich-command="insertUnorderedList" title="列表">•</button>
+                    <button type="button" data-rich-command="justifyLeft" title="左对齐">左</button>
+                    <button type="button" data-rich-command="justifyCenter" title="居中">中</button>
+                    <button type="button" data-rich-action="link" title="插入链接">链接</button>
+                    <button type="button" data-rich-action="image" title="插入图片">图片</button>
+                    <button type="button" data-rich-action="source" title="源码">源码</button>
+                    <button type="button" data-rich-action="preview" title="预览">预览</button>
+                  </div>
+                  <div class="rich-workspace">
+                    <div class="rich-surface" id="product-rich-editor" contenteditable="true"></div>
+                    <textarea class="rich-source hidden" id="product-rich-source"></textarea>
+                    <div class="rich-preview hidden" id="product-rich-preview"></div>
+                  </div>
+                </div>
+              </section>
+            </form>
+          </div>
+        </section>
+
+        <section id="admin-orders" class="admin-view">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>订单</th><th>客户</th><th>商品</th><th>金额</th><th>物流</th><th>状态</th><th>操作</th></tr>
+              </thead>
+              <tbody id="order-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="admin-acquisition" class="admin-view">
+          <div id="campaign-overview">
+            <div class="toolbar">
+              <button class="btn" id="new-campaign"><span class="slot-icon" data-icon="plus"></span> 新建活动</button>
+              <button class="btn ghost" id="refresh-campaigns"><span class="slot-icon" data-icon="refresh"></span> 刷新</button>
+            </div>
+            <div class="admin-grid">
+              <div class="card">
+                <div class="card-head"><h2>活动列表</h2></div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>活动</th><th>引流商品</th><th>引流价</th><th>关系模式</th><th>参与</th><th>状态</th><th>操作</th></tr>
+                    </thead>
+                    <tbody id="campaign-table"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-head"><h2>活动配置与数据</h2></div>
+                <div id="campaign-detail" class="list"></div>
+              </div>
+            </div>
+            <div class="admin-grid" style="margin-top:14px;">
+              <div class="card">
+                <div class="card-head"><h2>关系链</h2></div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>会员</th><th>推荐人</th><th>上一级</th><th>团队长</th><th>进入时间</th></tr>
+                    </thead>
+                    <tbody id="campaign-relations"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-head"><h2>素材模板</h2></div>
+                <div class="toolbar">
+                  <button class="btn ghost" id="new-material"><span class="slot-icon" data-icon="plus"></span> 添加素材</button>
+                </div>
+                <div class="list" id="material-list"></div>
+              </div>
+            </div>
+          </div>
+          <div class="card campaign-editor-card hidden" id="campaign-editor">
+            <div class="campaign-editor-head">
+              <div>
+                <button class="btn secondary compact" id="back-campaign-list" type="button">返回列表</button>
+                <h2 id="campaign-editor-title">新建拓客宝活动</h2>
+              </div>
+              <div class="campaign-editor-actions">
+                <button class="btn secondary compact" id="campaign-prev-step" type="button">上一步</button>
+                <button class="btn ghost compact" id="campaign-next-step" type="button">下一步</button>
+                <button class="btn compact" id="save-campaign" type="button">保存活动</button>
+              </div>
+            </div>
+            <div class="campaign-stepper" role="tablist" aria-label="拓客宝配置步骤">
+              <button type="button" class="active" data-campaign-step="base"><strong>1</strong><span>基本设置</span><small>活动基本设置</small></button>
+              <button type="button" data-campaign-step="reward"><strong>2</strong><span>提成设置</span><small>推荐人奖励方案</small></button>
+              <button type="button" data-campaign-step="lottery"><strong>3</strong><span>抽奖设置</span><small>下单后参与抽奖</small></button>
+              <button type="button" data-campaign-step="traffic"><strong>4</strong><span>引流设置</span><small>下单后引流</small></button>
+              <button type="button" data-campaign-step="other"><strong>5</strong><span>其他设置</span><small>活动参数设置</small></button>
+              <button type="button" data-campaign-step="done"><strong>6</strong><span>完成</span><small>发布前确认</small></button>
+            </div>
+            <form id="campaign-form" class="campaign-step-form">
+            <input type="hidden" id="campaign-id" />
+            <section class="campaign-step-panel active" data-campaign-panel="base">
+              <div class="campaign-panel-head">
+                <h3>基本设置</h3>
+                <p>活动名称、商品、时间、库存和限购。</p>
+              </div>
+              <div class="form-grid">
+                <label class="field wide">
+                  <span>活动主题</span>
+                  <input class="input" id="campaign-name" />
+                </label>
+                <label class="field wide">
+                  <span>活动描述</span>
+                  <input class="input" id="campaign-description" />
+                </label>
+                <label class="field">
+                  <span>引流商品</span>
+                  <select class="select" id="campaign-product"></select>
+                </label>
+                <label class="field">
+                  <span>活动状态</span>
+                  <select class="select" id="campaign-status">
+                    <option value="draft">未发布</option>
+                    <option value="published">已发布</option>
+                    <option value="ended">已结束</option>
+                    <option value="expired">已过期</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>开始时间</span>
+                  <input class="input" id="campaign-start" type="datetime-local" />
+                </label>
+                <label class="field">
+                  <span>结束时间</span>
+                  <input class="input" id="campaign-end" type="datetime-local" />
+                </label>
+                <label class="field">
+                  <span>商品数量</span>
+                  <input class="input" id="campaign-stock" type="number" min="0" step="1" />
+                </label>
+                <label class="field">
+                  <span>引流价</span>
+                  <input class="input" id="campaign-lead-price" type="number" min="0" step="0.01" />
+                </label>
+                <label class="field">
+                  <span>每人限购</span>
+                  <input class="input" id="campaign-user-limit" type="number" min="0" step="1" />
+                </label>
+                <label class="field">
+                  <span>每单限购</span>
+                  <input class="input" id="campaign-order-limit" type="number" min="0" step="1" />
+                </label>
+              </div>
+            </section>
+            <section class="campaign-step-panel" data-campaign-panel="reward">
+              <div class="campaign-panel-head">
+                <h3>提成设置</h3>
+                <p>上下级绑定、奖励发放、分销权限和团队长奖励。</p>
+              </div>
+              <div class="form-grid">
+            <label class="field wide">
+              <span>上下级绑定模式</span>
+              <select class="select" id="campaign-relation-mode">
+                <option value="current">按会员当前推荐关系</option>
+                <option value="first">按会员首次推荐关系</option>
+                <option value="activity_visit">独立关系链：进入活动锁定</option>
+                <option value="activity_paid">独立关系链：下单付款后锁定</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>顶级推荐人 ID</span>
+              <input class="input" id="campaign-default-inviter" type="number" min="0" step="1" placeholder="空为无" />
+            </label>
+            <label class="field">
+              <span>奖励发放方式</span>
+              <select class="select" id="campaign-reward-issue-way">
+                <option value="withdraw">提现后发放</option>
+                <option value="instant">拓客成功后直接到账</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>直接到账方式</span>
+              <select class="select" id="campaign-direct-pay-way">
+                <option value="wechat_balance">企业付款到零钱</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>奖励权限</span>
+              <select class="select" id="campaign-reward-permission">
+                <option value="all">人人分销</option>
+                <option value="buyer_only">购物后可分销</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>分销奖励规则</span>
+              <select class="select" id="campaign-reward-rule">
+                <option value="uniform">统一奖励</option>
+                <option value="member_level">按会员等级奖励</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>一级购买奖励</span>
+              <input class="input" id="campaign-reward1" type="number" min="0" step="0.01" />
+            </label>
+            <label class="field">
+              <span>二级购买奖励</span>
+              <input class="input" id="campaign-reward2" type="number" min="0" step="0.01" />
+            </label>
+            <label class="field" style="display:flex; align-items:center; gap:10px;">
+              <input id="campaign-multiple-reward" type="checkbox" style="width:18px; height:18px;" />
+              <span>启用倍数奖励</span>
+            </label>
+            <label class="field">
+              <span>每多少单触发倍数奖励</span>
+              <input class="input" id="campaign-multiple-every" type="number" min="0" step="1" placeholder="0 为不触发" />
+            </label>
+            <label class="field">
+              <span>倍数额外奖励</span>
+              <input class="input" id="campaign-multiple-amount" type="number" min="0" step="0.01" />
+            </label>
+            <label class="field" style="display:flex; align-items:center; gap:10px;">
+              <input id="campaign-step-reward" type="checkbox" style="width:18px; height:18px;" />
+              <span>启用阶梯奖励</span>
+            </label>
+            <label class="field">
+              <span>第多少单触发阶梯奖励</span>
+              <input class="input" id="campaign-step-threshold" type="number" min="0" step="1" placeholder="0 为不触发" />
+            </label>
+            <label class="field">
+              <span>阶梯额外奖励</span>
+              <input class="input" id="campaign-step-amount" type="number" min="0" step="0.01" />
+            </label>
+            <label class="field" style="display:flex; align-items:center; gap:10px;">
+              <input id="campaign-team-reward" type="checkbox" style="width:18px; height:18px;" />
+              <span>启用团队长奖励</span>
+            </label>
+            <label class="field">
+              <span>直属团队奖励</span>
+              <input class="input" id="campaign-team-reward1" type="number" min="0" step="0.01" />
+            </label>
+            <label class="field">
+              <span>间推团队奖励</span>
+              <input class="input" id="campaign-team-reward2" type="number" min="0" step="0.01" />
+            </label>
+              </div>
+            </section>
+            <section class="campaign-step-panel" data-campaign-panel="lottery">
+              <div class="campaign-panel-head">
+                <h3>抽奖设置</h3>
+                <p>控制下单后是否抽奖、奖品、概率和现金红包发放。</p>
+              </div>
+              <div class="form-grid">
+                <label class="field" style="display:flex; align-items:center; gap:10px;">
+                  <input id="campaign-lottery-enabled" type="checkbox" style="width:18px; height:18px;" />
+                  <span>启用下单后抽奖</span>
+                </label>
+                <label class="field" style="display:flex; align-items:center; gap:10px;">
+                  <input id="campaign-lottery-cash" type="checkbox" style="width:18px; height:18px;" />
+                  <span>现金红包直接发放</span>
+                </label>
+                <label class="field wide">
+                  <span>抽奖活动说明</span>
+                  <textarea class="textarea" id="campaign-lottery-desc"></textarea>
+                </label>
+                <div class="field full">
+                  <div class="field-row-head">
+                    <span>奖品设置</span>
+                    <button class="btn ghost compact" type="button" data-add-campaign-row="lottery-prize">添加奖品</button>
+                  </div>
+                  <div class="editor-table-wrap">
+                    <table class="editor-table">
+                      <thead>
+                        <tr>
+                          <th>奖品名称</th>
+                          <th>奖品图 URL</th>
+                          <th>奖品类型</th>
+                          <th>金额</th>
+                          <th>库存</th>
+                          <th>每人限中</th>
+                          <th>中奖概率%</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="campaign-lottery-prize-rows"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section class="campaign-step-panel" data-campaign-panel="traffic">
+              <div class="campaign-panel-head">
+                <h3>引流设置</h3>
+                <p>设置个人码、群码切换、过期提醒和团队长上传权限。</p>
+              </div>
+              <div class="form-grid">
+                <label class="field wide">
+                  <span>引流入口图片 URL</span>
+                  <input class="input" id="campaign-qrcode-guide" />
+                </label>
+                <label class="field" style="display:flex; align-items:center; gap:10px;">
+                  <input id="campaign-team-qrcode-enabled" type="checkbox" style="width:18px; height:18px;" />
+                  <span>允许团队长上传引流码</span>
+                </label>
+                <label class="field">
+                  <span>群码展示上限</span>
+                  <input class="input" id="campaign-group-switch-limit" type="number" min="0" step="1" placeholder="180" />
+                </label>
+                <label class="field wide">
+                  <span>过期提醒通知人</span>
+                  <input class="input" id="campaign-expire-notify-users" placeholder="多个会员 ID 用逗号分隔" />
+                </label>
+                <div class="field wide">
+                  <span>团队长可上传类型</span>
+                  <div class="inline-checks">
+                    <label><input id="campaign-qrcode-type-personal" type="checkbox" /> 个人码</label>
+                    <label><input id="campaign-qrcode-type-group" type="checkbox" /> 群码</label>
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section class="campaign-step-panel" data-campaign-panel="other">
+              <div class="campaign-panel-head">
+                <h3>其他设置</h3>
+                <p>虚拟展示量、排行榜、客服、音乐、表单和分享素材。</p>
+              </div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>虚拟销量</span>
+                  <input class="input" id="campaign-virtual-sold" type="number" min="0" step="1" />
+                </label>
+                <label class="field">
+                  <span>虚拟浏览量</span>
+                  <input class="input" id="campaign-virtual-browse" type="number" min="0" step="1" />
+                </label>
+                <label class="field">
+                  <span>虚拟分享人数</span>
+                  <input class="input" id="campaign-virtual-share" type="number" min="0" step="1" />
+                </label>
+                <label class="field">
+                  <span>虚拟邀请人数</span>
+                  <input class="input" id="campaign-virtual-invite" type="number" min="0" step="1" />
+                </label>
+                <label class="field wide">
+                  <span>背景音乐 URL</span>
+                  <input class="input" id="campaign-background-music" />
+                </label>
+                <label class="field wide">
+                  <span>客服二维码 URL</span>
+                  <input class="input" id="campaign-service-qrcode" />
+                </label>
+                <label class="field wide">
+                  <span>分享封面 URL</span>
+                  <input class="input" id="campaign-share-cover" />
+                </label>
+                <label class="field wide">
+                  <span>分享描述</span>
+                  <input class="input" id="campaign-share-description" />
+                </label>
+                <label class="field wide">
+                  <span>朋友圈文案</span>
+                  <input class="input" id="campaign-share-timeline" />
+                </label>
+                <div class="field full">
+                  <div class="field-row-head">
+                    <span>虚拟排行榜</span>
+                    <button class="btn ghost compact" type="button" data-add-campaign-row="ranking">添加排行</button>
+                  </div>
+                  <div class="editor-table-wrap">
+                    <table class="editor-table">
+                      <thead>
+                        <tr>
+                          <th>头像 URL</th>
+                          <th>昵称</th>
+                          <th>邀请人数</th>
+                          <th>获得奖励</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="campaign-ranking-rows"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="field full">
+                  <div class="field-row-head">
+                    <span>下单表单</span>
+                    <button class="btn ghost compact" type="button" data-add-campaign-row="form-field">添加字段</button>
+                  </div>
+                  <div class="editor-table-wrap">
+                    <table class="editor-table">
+                      <thead>
+                        <tr>
+                          <th>字段标题</th>
+                          <th>字段编码</th>
+                          <th>类型</th>
+                          <th>选项</th>
+                          <th>必填</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="campaign-form-field-rows"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="field full">
+                  <div class="field-row-head">
+                    <span>分享海报</span>
+                    <button class="btn ghost compact" type="button" data-add-campaign-row="poster">添加海报</button>
+                  </div>
+                  <div class="editor-table-wrap">
+                    <table class="editor-table">
+                      <thead>
+                        <tr>
+                          <th>海报图片 URL</th>
+                          <th>分享文案</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="campaign-poster-rows"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section class="campaign-step-panel" data-campaign-panel="done">
+              <div class="campaign-panel-head">
+                <h3>完成</h3>
+                <p>确认活动配置后保存。发布状态由“基本设置”里的活动状态控制。</p>
+              </div>
+              <div class="campaign-review-grid" id="campaign-review"></div>
+            </section>
+          </form>
+          </div>
+
+        </section>
+
+        <section id="admin-distributors" class="admin-view">
+          <div class="admin-grid">
+            <div class="card">
+              <div class="card-head"><h2>分销员列表与审核</h2></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>用户</th><th>上级</th><th>客户数</th><th>累计佣金</th><th>可提现</th><th>状态</th><th>操作</th></tr>
+                  </thead>
+                  <tbody id="distributor-table"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>佣金流水</h2></div>
+              <div class="list" id="commission-flow"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="admin-withdrawals" class="admin-view">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>申请</th><th>用户</th><th>金额</th><th>备注</th><th>状态</th><th>审核信息</th><th>操作</th></tr>
+              </thead>
+              <tbody id="withdrawal-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="admin-settings" class="admin-view">
+          <div class="card">
+            <div class="card-head"><h2>佣金与合规配置</h2></div>
+            <div class="form-grid">
+              <label class="field">
+                <span>一级全局佣金比例</span>
+                <input class="input" id="setting-level1" type="number" min="0" max="1" step="0.01" />
+              </label>
+              <label class="field">
+                <span>二级佣金比例</span>
+                <input class="input" id="setting-level2" type="number" min="0" max="1" step="0.01" />
+              </label>
+              <label class="field">
+                <span>最低提现金额</span>
+                <input class="input" id="setting-min-withdrawal" type="number" min="0" step="1" />
+              </label>
+              <label class="field">
+                <span>前端合规称呼</span>
+                <input class="input" id="setting-compliance-name" />
+              </label>
+              <label class="field wide" style="display:flex; align-items:center; gap:10px;">
+                <input id="setting-auto-pay" type="checkbox" style="width:18px; height:18px;" />
+                <span>提现审核通过后直接标记为已打款（模拟企业付款到零钱）</span>
+              </label>
+            </div>
+            <div style="margin-top:14px;">
+              <button class="btn" id="save-settings"><span class="slot-icon" data-icon="check"></span> 保存设置</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script src="/icons.js?v=20260613-screen1"></script>
+    <script src="/admin.js?v=20260613-screen1"></script>
+  </body>
+</html>
+
+

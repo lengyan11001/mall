@@ -1,0 +1,99 @@
+<view class="page">
+  <view class="card">
+    <view class="row between">
+      <view>
+        <view class="dist-title">推荐有礼</view>
+        <view class="muted">合规二级推荐奖励</view>
+      </view>
+      <text class="pill">{{summary.user.distributor_status || '-'}}</text>
+    </view>
+    <view class="grid-2 mt">
+      <view class="tile">
+        <text class="tile-label">可提现</text>
+        <text class="tile-value">¥{{summary.withdrawable}}</text>
+      </view>
+      <view class="tile">
+        <text class="tile-label">待结算</text>
+        <text class="tile-value">¥{{summary.pending}}</text>
+      </view>
+      <view class="tile">
+        <text class="tile-label">直接客户</text>
+        <text class="tile-value">{{summary.direct_count}}</text>
+      </view>
+      <view class="tile">
+        <text class="tile-label">间接客户</text>
+        <text class="tile-value">{{summary.indirect_count}}</text>
+      </view>
+    </view>
+    <view class="actions">
+      <button class="btn" bindtap="applyDistributor">申请推荐员</button>
+      <button class="btn ghost" bindtap="withdraw">申请提现</button>
+    </view>
+  </view>
+
+  <view class="card address-section">
+    <view class="row between address-head">
+      <view>
+        <view class="section-heading">收货地址</view>
+        <view class="muted">下单时默认选用这里的默认地址</view>
+      </view>
+      <button wx:if="{{defaultAddress}}" class="btn small" data-id="{{defaultAddress.id}}" bindtap="startAddressEdit">编辑地址</button>
+      <button wx:else class="btn small" data-id="0" bindtap="startAddressEdit">新增地址</button>
+    </view>
+
+    <view wx:if="{{defaultAddress && !addressEditing}}" class="address-preview">
+      <view class="row between">
+        <view class="address-person">{{defaultAddress.receiver_name}} {{defaultAddress.phone}}</view>
+        <text wx:if="{{defaultAddress.is_default}}" class="pill warn">默认</text>
+      </view>
+      <view class="muted address-text">{{defaultAddress.full_address}}</view>
+    </view>
+    <view wx:elif="{{!addressEditing}}" class="empty compact-empty">还没有收货地址</view>
+
+    <view wx:if="{{addressEditing}}" class="address-form">
+      <view class="form-grid">
+        <input class="input" data-field="receiver_name" value="{{addressForm.receiver_name}}" bindinput="onAddressInput" placeholder="收件人" />
+        <input class="input" data-field="phone" value="{{addressForm.phone}}" bindinput="onAddressInput" placeholder="手机号" type="number" />
+      </view>
+      <view class="form-grid">
+        <input class="input" data-field="province" value="{{addressForm.province}}" bindinput="onAddressInput" placeholder="省份" />
+        <input class="input" data-field="city" value="{{addressForm.city}}" bindinput="onAddressInput" placeholder="城市" />
+      </view>
+      <input class="input" data-field="district" value="{{addressForm.district}}" bindinput="onAddressInput" placeholder="区县" />
+      <input class="input" data-field="detail" value="{{addressForm.detail}}" bindinput="onAddressInput" placeholder="详细地址，如街道门牌号" />
+      <view class="row between default-row">
+        <text>设为默认地址</text>
+        <switch checked="{{addressForm.is_default}}" bindchange="onAddressDefault" color="#0f9f6e" />
+      </view>
+      <view class="actions compact-actions">
+        <button class="btn" bindtap="saveAddress">保存地址</button>
+        <button class="btn secondary" bindtap="cancelAddressEdit">取消</button>
+      </view>
+    </view>
+  </view>
+
+  <view class="section-title">佣金明细</view>
+  <view wx:if="{{commissions.length}}">
+    <view wx:for="{{commissions}}" wx:key="id" class="card">
+      <view class="row between">
+        <view class="item-title">{{item.product.title}} · {{item.level_text}}</view>
+        <text class="pill {{item.status === 'pending' ? 'warn' : item.status === 'canceled' ? 'danger' : ''}}">{{item.status_text}}</text>
+      </view>
+      <view class="muted">来自 {{item.buyer.nickname}} 的订单 #{{item.order_id}}</view>
+      <view class="price">¥{{item.amount}}</view>
+    </view>
+  </view>
+  <view wx:else class="empty">暂无佣金明细</view>
+
+  <view class="section-title">下级客户</view>
+  <view wx:if="{{customers.length}}">
+    <view wx:for="{{customers}}" wx:key="id" class="card">
+      <view class="row between">
+        <view class="item-title">{{item.nickname}}</view>
+        <text class="pill">下级 {{item.children_count}}</text>
+      </view>
+      <view class="muted">ID {{item.id}} · {{item.phone || '未绑定手机号'}}</view>
+    </view>
+  </view>
+  <view wx:else class="empty">暂无下级客户</view>
+</view>

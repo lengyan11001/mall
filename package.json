@@ -1,0 +1,23 @@
+{
+  "name": "wechat-distribution-mall",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-oriented WeChat distribution mall API, storefront, and admin console.",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "db:migrate": "node scripts/migrate.js",
+    "db:seed": "node scripts/seed.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "mysql2": "^3.11.5",
+    "sharp": "^0.35.1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "miniprogram-ci": "^2.1.31"
+  }
+}

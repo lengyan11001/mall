@@ -1,0 +1,10 @@
+.order-title {
+  max-width: 440rpx;
+  font-size: 30rpx;
+  font-weight: 800;
+}
+
+.order-card .muted {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+}

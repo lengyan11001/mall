@@ -1,0 +1,17 @@
+<view class="page">
+  <view wx:if="{{orders.length}}">
+    <view wx:for="{{orders}}" wx:key="id" class="card order-card">
+      <view class="row between">
+        <view class="order-title">{{item.product.title}}</view>
+        <text class="pill {{item.status === 'refunded' ? 'danger' : item.status === 'paid' || item.status === 'shipped' ? 'warn' : ''}}">{{item.status_text}}</text>
+      </view>
+      <view class="muted">订单 #{{item.id}} · {{item.quantity}} 件 · ¥{{item.amount}}</view>
+      <view class="muted">物流：{{item.logistics_no || '待发货'}}</view>
+      <view class="actions">
+        <button class="btn ghost" data-id="{{item.product_id}}" bindtap="showPoster">海报</button>
+        <button class="btn" data-id="{{item.id}}" disabled="{{item.status !== 'paid' && item.status !== 'shipped'}}" bindtap="confirmOrder">确认收货</button>
+      </view>
+    </view>
+  </view>
+  <view wx:else class="empty">还没有订单，可以先去首页活动下单。</view>
+</view>

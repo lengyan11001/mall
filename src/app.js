@@ -1,0 +1,515 @@
+const http = require("http");
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+const { URL } = require("url");
+const { codeToSession } = require("./wechat");
+const { decryptResource, verifyWechatpaySignature } = require("./wechat-pay");
+
+const publicDir = path.join(__dirname, "..", "public");
+
+function send(res, status, payload) {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+    "Cache-Control": "no-store"
+  });
+  res.end(body);
+}
+
+function ok(res, data) {
+  send(res, 200, { ok: true, data });
+}
+
+function fail(res, status, message, details) {
+  send(res, status, { ok: false, error: message, details });
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    req.on("data", chunk => {
+      raw += chunk;
+      if (raw.length > 1024 * 1024) {
+        reject(new Error("请求体过大"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      if (!raw) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        reject(new Error("JSON 格式不正确"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let length = 0;
+    req.on("data", chunk => {
+      chunks.push(chunk);
+      length += chunk.length;
+      if (length > 1024 * 1024) {
+        reject(new Error("请求体过大"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+function matchId(pathname, prefix) {
+  if (!pathname.startsWith(prefix)) return null;
+  const rest = pathname.slice(prefix.length);
+  if (!/^\d+(\/.*)?$/.test(rest)) return null;
+  return Number(rest.split("/")[0]);
+}
+
+function safeEqualText(left, right) {
+  const leftBuffer = Buffer.from(String(left || ""));
+  const rightBuffer = Buffer.from(String(right || ""));
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function hasAdminAuth(req) {
+  const username = process.env.ADMIN_USERNAME || "";
+  const password = process.env.ADMIN_PASSWORD || "";
+  if (!username || !password) return false;
+  const token = (req.headers["x-admin-token"] || "").toString();
+  const expectedToken = crypto.createHash("sha256").update(`${username}:${password}`).digest("hex");
+  if (token && safeEqualText(token, expectedToken)) return true;
+  const header = req.headers.authorization || "";
+  if (!header.startsWith("Basic ")) return false;
+  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+  const splitAt = decoded.indexOf(":");
+  if (splitAt < 0) return false;
+  return safeEqualText(decoded.slice(0, splitAt), username) && safeEqualText(decoded.slice(splitAt + 1), password);
+}
+
+function requireAdmin(req, res, isApi = false) {
+  if (process.env.NODE_ENV !== "production" && !process.env.ADMIN_PASSWORD) return true;
+  if (hasAdminAuth(req)) return true;
+  if (isApi) {
+    fail(res, 401, "后台需要登录");
+    return false;
+  }
+  res.writeHead(401, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store"
+  });
+  res.end("后台需要登录");
+  return false;
+}
+
+function serveStatic(req, res, pathname, hostname = "") {
+  const isCmsHost = hostname.split(":")[0].toLowerCase() === "mallcms.bhzn.top";
+  const routePath = pathname === "/"
+    ? (isCmsHost ? "/admin.html" : "/index.html")
+    : pathname === "/admin"
+      ? "/admin.html"
+      : pathname;
+  const absolute = path.normalize(path.join(publicDir, decodeURIComponent(routePath)));
+  if (!absolute.startsWith(publicDir)) {
+    res.writeHead(403);
+    res.end("Forbidden");
+    return;
+  }
+
+  fs.readFile(absolute, (error, data) => {
+    if (error) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not found");
+      return;
+    }
+    const ext = path.extname(absolute).toLowerCase();
+    const type = {
+      ".html": "text/html; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".js": "text/javascript; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".svg": "image/svg+xml"
+    }[ext] || "application/octet-stream";
+    const isAdminAsset = isCmsHost && [".html", ".css", ".js"].includes(ext);
+    const cache = isAdminAsset
+      ? "no-cache"
+      : [".css", ".js", ".png", ".jpg", ".jpeg", ".svg"].includes(ext)
+      ? "public, max-age=3600"
+      : "no-cache";
+    res.writeHead(200, {
+      "Content-Type": type,
+      "Cache-Control": cache,
+      "X-Content-Type-Options": "nosniff"
+    });
+    res.end(data);
+  });
+}
+
+function createServer({ store }) {
+  async function handleApi(req, res, pathname, searchParams) {
+    if (req.method === "GET" && pathname === "/api/health") {
+      await store.ping();
+      ok(res, {
+        service: "wechat-distribution-mall",
+        storage: "mysql",
+        time: new Date().toISOString()
+      });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/auth/login") {
+      if (process.env.NODE_ENV === "production" && process.env.ENABLE_DEV_LOGIN !== "1") {
+        fail(res, 403, "生产环境请使用微信小程序登录");
+        return;
+      }
+      ok(res, await store.login(await readBody(req)));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/admin/login") {
+      const username = process.env.ADMIN_USERNAME || "";
+      const password = process.env.ADMIN_PASSWORD || "";
+      const body = await readBody(req);
+      if (!username || !password) {
+        fail(res, 503, "后台账号未配置");
+        return;
+      }
+      if (!safeEqualText(body.username, username) || !safeEqualText(body.password, password)) {
+        fail(res, 401, "账号或密码不正确");
+        return;
+      }
+      ok(res, {
+        token: crypto.createHash("sha256").update(`${username}:${password}`).digest("hex"),
+        username
+      });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/wechat/login") {
+      const body = await readBody(req);
+      const session = await codeToSession(body.code);
+      ok(res, await store.wechatLogin({
+        openid: session.openid,
+        unionid: session.unionid || "",
+        sessionKey: session.session_key || "",
+        scene: body.scene || body.parent_id || "",
+        userInfo: body.userInfo || null
+      }));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/me") {
+      ok(res, await store.getUser(Number(searchParams.get("user_id"))));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/user/addresses") {
+      ok(res, await store.listUserAddresses(Number(searchParams.get("user_id"))));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/user/addresses") {
+      ok(res, await store.saveUserAddress(await readBody(req)));
+      return;
+    }
+
+    const userAddressId = matchId(pathname, "/api/user/addresses/");
+    if (req.method === "PUT" && userAddressId) {
+      const body = await readBody(req);
+      ok(res, await store.saveUserAddress({ ...body, id: userAddressId }));
+      return;
+    }
+
+    if (req.method === "PATCH" && pathname === "/api/me/inviter") {
+      ok(res, await store.bindInviter(await readBody(req)));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/distribution/apply") {
+      ok(res, await store.applyDistributor(await readBody(req)));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/products") {
+      ok(res, await store.listPublicProducts({
+        category: searchParams.get("category") || "全部",
+        keyword: searchParams.get("keyword") || ""
+      }));
+      return;
+    }
+
+    const productId = matchId(pathname, "/api/products/");
+    if (req.method === "GET" && productId) {
+      ok(res, await store.getPublicProduct(productId));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/acquisition/campaigns") {
+      ok(res, await store.listPublicAcquisitionCampaigns({
+        keyword: searchParams.get("keyword") || ""
+      }));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/acquisition/active") {
+      ok(res, await store.getActiveAcquisitionCampaign(
+        Number(searchParams.get("user_id")) || null,
+        searchParams.get("scene") || ""
+      ));
+      return;
+    }
+
+    const publicAcquisitionId = matchId(pathname, "/api/acquisition/campaigns/");
+    if (req.method === "GET" && publicAcquisitionId && pathname === `/api/acquisition/campaigns/${publicAcquisitionId}/invite-poster`) {
+      ok(res, await store.campaignInvitePoster({
+        campaignId: publicAcquisitionId,
+        userId: Number(searchParams.get("user_id"))
+      }));
+      return;
+    }
+
+    if (req.method === "GET" && publicAcquisitionId) {
+      ok(res, await store.getPublicAcquisitionCampaign(
+        publicAcquisitionId,
+        Number(searchParams.get("user_id")) || null,
+        searchParams.get("scene") || ""
+      ));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/orders") {
+      ok(res, await store.createOrder(await readBody(req)));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/orders") {
+      ok(res, await store.listOrders({ userId: Number(searchParams.get("user_id")) || null }));
+      return;
+    }
+
+    const orderId = matchId(pathname, "/api/orders/");
+    if (req.method === "POST" && orderId && pathname.endsWith("/pay/sync")) {
+      ok(res, await store.syncWechatPayment(orderId));
+      return;
+    }
+
+    if (req.method === "POST" && orderId && pathname.endsWith("/close")) {
+      ok(res, await store.closeUnpaidOrder(orderId));
+      return;
+    }
+
+    if (req.method === "POST" && orderId && pathname.endsWith("/confirm")) {
+      ok(res, await store.confirmOrder(orderId));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/pay/wechat/notify") {
+      const rawBody = await readRawBody(req);
+      if (!verifyWechatpaySignature(req.headers, rawBody)) {
+        send(res, 401, { code: "FAIL", message: "签名验证失败" });
+        return;
+      }
+      const payload = JSON.parse(rawBody || "{}");
+      const resource = decryptResource(payload.resource || {});
+      await store.handleWechatPayNotification(resource);
+      send(res, 200, { code: "SUCCESS", message: "成功" });
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/distribution/summary") {
+      ok(res, await store.distributionSummary(Number(searchParams.get("user_id"))));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/withdrawals") {
+      ok(res, await store.createWithdrawal(await readBody(req)));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/share-poster") {
+      ok(res, await store.sharePoster({
+        userId: Number(searchParams.get("user_id")),
+        productId: Number(searchParams.get("product_id"))
+      }));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/screen/dashboard") {
+      ok(res, await store.screenDashboard());
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/screen/heartbeat") {
+      ok(res, await store.screenHeartbeat(await readBody(req)));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/admin/dashboard") {
+      ok(res, await store.dashboard());
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/admin/products") {
+      ok(res, await store.listAdminProducts());
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/admin/products") {
+      ok(res, await store.createProduct(await readBody(req)));
+      return;
+    }
+
+    const adminProductId = matchId(pathname, "/api/admin/products/");
+    if (req.method === "PUT" && adminProductId) {
+      ok(res, await store.updateProduct(adminProductId, await readBody(req)));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/admin/acquisition/campaigns") {
+      ok(res, await store.listAcquisitionCampaigns({
+        status: searchParams.get("status") || "",
+        keyword: searchParams.get("keyword") || ""
+      }));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/admin/acquisition/campaigns") {
+      ok(res, await store.createAcquisitionCampaign(await readBody(req)));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/admin/acquisition/materials") {
+      ok(res, await store.listAcquisitionMaterials());
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/admin/acquisition/materials") {
+      ok(res, await store.saveAcquisitionMaterial(await readBody(req)));
+      return;
+    }
+
+    const acquisitionId = matchId(pathname, "/api/admin/acquisition/campaigns/");
+    if (acquisitionId) {
+      if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
+        ok(res, await store.getAcquisitionCampaign(acquisitionId));
+        return;
+      }
+      if (req.method === "PUT" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
+        ok(res, await store.updateAcquisitionCampaign(acquisitionId, await readBody(req)));
+        return;
+      }
+      if (req.method === "PATCH" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
+        ok(res, await store.patchAcquisitionCampaign(acquisitionId, await readBody(req)));
+        return;
+      }
+      if (req.method === "POST" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/qrcodes`) {
+        ok(res, await store.saveAcquisitionQrcode(acquisitionId, await readBody(req)));
+        return;
+      }
+      const qrcodePrefix = `/api/admin/acquisition/campaigns/${acquisitionId}/qrcodes/`;
+      const qrcodeId = matchId(pathname, qrcodePrefix);
+      if (req.method === "DELETE" && qrcodeId) {
+        ok(res, await store.deleteAcquisitionQrcode(acquisitionId, qrcodeId));
+        return;
+      }
+      if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/relations`) {
+        ok(res, await store.listAcquisitionRelations(acquisitionId));
+        return;
+      }
+      if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/orders`) {
+        ok(res, await store.listAcquisitionOrders(acquisitionId));
+        return;
+      }
+      if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/rewards`) {
+        ok(res, await store.listAcquisitionRewards(acquisitionId));
+        return;
+      }
+      if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/dashboard`) {
+        ok(res, await store.acquisitionDashboard(acquisitionId));
+        return;
+      }
+    }
+
+    if (req.method === "GET" && pathname === "/api/admin/orders") {
+      ok(res, await store.listOrders({ userId: null }));
+      return;
+    }
+
+    const adminOrderId = matchId(pathname, "/api/admin/orders/");
+    if (req.method === "PATCH" && adminOrderId) {
+      ok(res, await store.patchOrder(adminOrderId, await readBody(req)));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/admin/distributors") {
+      ok(res, await store.listDistributors());
+      return;
+    }
+
+    const distributorId = matchId(pathname, "/api/admin/distributors/");
+    if (req.method === "PATCH" && distributorId) {
+      ok(res, await store.patchDistributor(distributorId, await readBody(req)));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/admin/commissions") {
+      ok(res, await store.listCommissions());
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/admin/withdrawals") {
+      ok(res, await store.listWithdrawals());
+      return;
+    }
+
+    const withdrawalId = matchId(pathname, "/api/admin/withdrawals/");
+    if (req.method === "PATCH" && withdrawalId) {
+      ok(res, await store.patchWithdrawal(withdrawalId, await readBody(req)));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/admin/settings") {
+      ok(res, await store.settings());
+      return;
+    }
+
+    if (req.method === "PUT" && pathname === "/api/admin/settings") {
+      ok(res, await store.updateSettings(await readBody(req)));
+      return;
+    }
+
+    fail(res, 404, "接口不存在");
+  }
+
+  return http.createServer(async (req, res) => {
+    const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    try {
+      if (requestUrl.pathname.startsWith("/api/admin/") && requestUrl.pathname !== "/api/admin/login" && !requireAdmin(req, res, true)) {
+        return;
+      }
+      if (requestUrl.pathname.startsWith("/api/")) {
+        await handleApi(req, res, requestUrl.pathname, requestUrl.searchParams);
+        return;
+      }
+      serveStatic(req, res, requestUrl.pathname, req.headers.host || "");
+    } catch (error) {
+      const status = error.statusCode || error.status || 500;
+      fail(res, status, status >= 500 ? "服务异常" : error.message, status >= 500 ? undefined : error.details);
+      if (status >= 500) console.error(error);
+    }
+  });
+}
+
+module.exports = { createServer };

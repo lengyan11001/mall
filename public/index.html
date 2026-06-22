@@ -1,0 +1,335 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>必火次元</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <main class="phone" aria-label="必火次元小程序">
+        <div class="mini-main">
+          <section id="view-home" class="mini-view active">
+            <div class="mini-hero">
+              <div class="profile-chip">
+                <div class="avatar" id="home-avatar">WX</div>
+                <div>
+                  <strong id="home-name">微信用户</strong>
+                  <small id="home-relation">正在载入账户</small>
+                </div>
+                <button class="icon-btn" id="open-login" title="登录 / 切换用户" style="margin-left:auto; background:rgba(255,255,255,.18); border-color:rgba(255,255,255,.35); color:white;"></button>
+              </div>
+              <h1>必火次元小程序</h1>
+              <p>商品、下单、推荐海报、佣金和提现已接入线上服务。</p>
+              <div class="hero-actions">
+                <button class="btn" id="hero-shop"></button>
+                <button class="btn secondary" id="hero-share"></button>
+              </div>
+            </div>
+
+            <div class="quick-stats">
+              <button data-tab="store"><span class="slot-icon" data-icon="shop"></span><span>商品</span></button>
+              <button data-tab="orders"><span class="slot-icon" data-icon="order"></span><span>订单</span></button>
+              <button data-tab="distribution"><span class="slot-icon" data-icon="wallet"></span><span>佣金</span></button>
+              <a href="/admin"><span class="slot-icon" data-icon="chart"></span><span>后台</span></a>
+            </div>
+
+            <section class="section">
+              <div class="section-head">
+                <div>
+                  <h2>实时概览</h2>
+                  <p>来自本地 API 的账户和分销数据</p>
+                </div>
+              </div>
+              <div class="summary-grid" id="home-summary"></div>
+            </section>
+
+            <section class="section">
+              <div class="section-head">
+                <div>
+                  <h2>推荐商品</h2>
+                  <p>可直接下单并生成推荐海报</p>
+                </div>
+              </div>
+              <div class="product-grid" id="home-products"></div>
+            </section>
+            <section class="section">
+              <div class="section-head">
+                <div>
+                  <h2>拓客宝活动</h2>
+                  <p>活动价商品和专属关系锁定</p>
+                </div>
+              </div>
+              <div class="product-grid" id="home-campaigns"></div>
+            </section>
+          </section>
+
+          <section id="view-store" class="mini-view">
+            <div class="section-head">
+              <div>
+                <h2>商品浏览</h2>
+                <p>分类、搜索、详情和微信支付下单</p>
+              </div>
+              <button class="icon-btn" id="refresh-products" title="刷新商品"></button>
+            </div>
+            <div class="search-row">
+              <input class="input" id="product-keyword" placeholder="搜索商品名称" />
+              <button class="btn" id="search-products"></button>
+            </div>
+            <div class="category-row" id="category-row"></div>
+            <div class="product-grid" id="product-grid"></div>
+            <section class="section">
+              <div class="section-head">
+                <div>
+                  <h2>拓客宝活动</h2>
+                  <p>特殊商品、活动价和推荐奖励</p>
+                </div>
+              </div>
+              <div class="product-grid" id="campaign-grid"></div>
+            </section>
+          </section>
+
+          <section id="view-orders" class="mini-view">
+            <div class="section-head">
+              <div>
+                <h2>订单列表</h2>
+                <p>发货、确认收货和退款会联动佣金状态</p>
+              </div>
+              <button class="icon-btn" id="refresh-orders" title="刷新订单"></button>
+            </div>
+            <div class="list" id="order-list"></div>
+          </section>
+
+          <section id="view-distribution" class="mini-view">
+            <div class="section-head">
+              <div>
+                <h2>分销中心</h2>
+                <p>使用合规的「推荐有礼」表述，仅演示二级佣金</p>
+              </div>
+              <button class="icon-btn" id="refresh-distribution" title="刷新分销数据"></button>
+            </div>
+            <div class="mini-panel">
+              <div class="summary-grid" id="distribution-summary"></div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+                <button class="btn" id="apply-distributor"></button>
+                <button class="btn ghost" id="open-withdrawal"></button>
+              </div>
+            </div>
+
+            <section class="section">
+              <div class="section-head">
+                <div>
+                  <h2>收货地址</h2>
+                  <p>订单默认选用这里配置的默认地址</p>
+                </div>
+                <button class="btn ghost" id="edit-address">新增/编辑</button>
+              </div>
+              <div id="address-panel"></div>
+              <form id="address-form" class="address-form hidden">
+                <div class="form-grid">
+                  <label class="field">
+                    <span>收件人</span>
+                    <input class="input" id="address-receiver" required />
+                  </label>
+                  <label class="field">
+                    <span>手机号</span>
+                    <input class="input" id="address-phone" required />
+                  </label>
+                  <label class="field">
+                    <span>省份</span>
+                    <input class="input" id="address-province" />
+                  </label>
+                  <label class="field">
+                    <span>城市</span>
+                    <input class="input" id="address-city" />
+                  </label>
+                  <label class="field">
+                    <span>区县</span>
+                    <input class="input" id="address-district" />
+                  </label>
+                  <label class="field wide">
+                    <span>详细地址</span>
+                    <input class="input" id="address-detail" required />
+                  </label>
+                </div>
+                <label class="inline-check">
+                  <input type="checkbox" id="address-default" checked />
+                  <span>设为默认地址</span>
+                </label>
+                <div class="drawer-footer">
+                  <button class="btn secondary" type="button" id="cancel-address">取消</button>
+                  <button class="btn" type="submit">保存地址</button>
+                </div>
+              </form>
+            </section>
+
+            <section class="section">
+              <div class="section-head">
+                <div>
+                  <h2>下级客户</h2>
+                  <p>扫码或 scene 参数绑定的直接推荐关系</p>
+                </div>
+              </div>
+              <div class="list" id="customer-list"></div>
+            </section>
+
+            <section class="section">
+              <div class="section-head">
+                <div>
+                  <h2>佣金明细</h2>
+                  <p>每笔佣金都能追溯到订单和购买人</p>
+                </div>
+              </div>
+              <div class="list" id="commission-list"></div>
+            </section>
+
+            <section class="section">
+              <div class="section-head">
+                <div>
+                  <h2>提现记录</h2>
+                  <p>后台审核后按企业付款流程处理</p>
+                </div>
+              </div>
+              <div class="list" id="withdrawal-list"></div>
+            </section>
+          </section>
+        </div>
+
+        <nav class="mini-tabs" aria-label="底部导航">
+          <button class="active" data-tab="home"><span class="slot-icon" data-icon="home"></span><span>首页</span></button>
+          <button data-tab="store"><span class="slot-icon" data-icon="shop"></span><span>商城</span></button>
+          <button data-tab="orders"><span class="slot-icon" data-icon="order"></span><span>订单</span></button>
+          <button data-tab="distribution"><span class="slot-icon" data-icon="wallet"></span><span>分销</span></button>
+        </nav>
+      </main>
+    </div>
+
+    <div class="detail-drawer" id="product-drawer" aria-modal="true" role="dialog">
+      <div class="drawer-card">
+        <div id="drawer-image"></div>
+        <div class="drawer-body">
+          <div class="drawer-title">
+            <div>
+              <h2 id="drawer-title"></h2>
+              <p id="drawer-desc" style="color:var(--muted); margin:8px 0 0;"></p>
+            </div>
+            <button class="icon-btn" id="close-drawer" title="关闭"></button>
+          </div>
+          <div class="summary-grid" style="margin-top:14px;">
+            <div class="summary-tile"><span>价格</span><strong id="drawer-price"></strong></div>
+            <div class="summary-tile"><span>库存</span><strong id="drawer-stock"></strong></div>
+          </div>
+          <div class="product-rich-detail hidden" id="drawer-rich-detail"></div>
+          <div class="buy-panel">
+            <label class="field">
+              <span>数量</span>
+              <input class="input" id="buy-quantity" type="number" min="1" max="99" value="1" />
+            </label>
+            <div class="address-select" id="buy-address-card"></div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px;">
+            <button class="btn" id="buy-now"></button>
+            <button class="btn ghost" id="make-poster"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-layer center" id="poster-modal" aria-modal="true" role="dialog">
+      <div class="modal-card">
+        <div class="modal-body">
+          <div class="drawer-title">
+            <h2 style="margin:0;">专属推荐海报</h2>
+            <button class="icon-btn" id="close-poster" title="关闭"></button>
+          </div>
+          <div id="poster-content" style="margin-top:14px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-layer center" id="campaign-modal" aria-modal="true" role="dialog">
+      <div class="modal-card">
+        <div id="campaign-image"></div>
+        <div class="modal-body">
+          <div class="drawer-title">
+            <div>
+              <h2 id="campaign-title"></h2>
+              <p id="campaign-desc" style="color:var(--muted); margin:8px 0 0;"></p>
+            </div>
+            <button class="icon-btn" id="close-campaign" title="关闭"></button>
+          </div>
+          <div id="campaign-content"></div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px;">
+            <button class="btn" id="campaign-buy-now"></button>
+            <button class="btn ghost" id="campaign-invite-now">邀请海报</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-layer center" id="campaign-flow-modal" aria-modal="true" role="dialog">
+      <div class="modal-card">
+        <div class="modal-body">
+          <div class="flow-steps" id="campaign-flow-steps"></div>
+          <div id="campaign-flow-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-layer center" id="login-modal" aria-modal="true" role="dialog">
+      <div class="modal-card">
+        <div class="modal-body">
+          <h2 style="margin:0 0 12px;">微信用户登录</h2>
+          <div class="form-grid">
+            <label class="field">
+              <span>昵称</span>
+              <input class="input" id="login-name" value="微信用户" />
+            </label>
+            <label class="field">
+              <span>手机号（可选）</span>
+              <input class="input" id="login-phone" value="13800009999" />
+            </label>
+            <label class="field wide">
+              <span>推荐人 ID / scene 参数（可选）</span>
+              <input class="input" id="login-scene" placeholder="例如 1" />
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn secondary" id="login-cancel">稍后登录</button>
+          <button class="btn" id="login-submit">登录并绑定</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-layer center" id="withdrawal-modal" aria-modal="true" role="dialog">
+      <div class="modal-card">
+        <div class="modal-body">
+          <div class="drawer-title">
+            <h2 style="margin:0;">申请提现</h2>
+            <button class="icon-btn" id="close-withdrawal" title="关闭"></button>
+          </div>
+          <div class="form-grid" style="margin-top:12px;">
+            <label class="field">
+              <span>提现金额</span>
+              <input class="input" id="withdrawal-amount" type="number" min="0" step="0.01" />
+            </label>
+            <label class="field">
+              <span>备注</span>
+              <input class="input" id="withdrawal-note" value="提现到微信零钱" />
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn secondary" id="withdrawal-cancel">取消</button>
+          <button class="btn" id="withdrawal-submit">提交审核</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script src="/icons.js?v=20260611-address"></script>
+    <script src="/app.js?v=20260611-address"></script>
+  </body>
+</html>

@@ -1,0 +1,37 @@
+﻿{
+  "pages": [
+    "pages/home/index",
+    "pages/store/index",
+    "pages/product/detail",
+    "pages/orders/index",
+    "pages/distribution/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "必火次元",
+    "navigationBarBackgroundColor": "#0f9f6e",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f5f7fb"
+  },
+  "tabBar": {
+    "color": "#667085",
+    "selectedColor": "#0f9f6e",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/home/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/orders/index",
+        "text": "订单"
+      },
+      {
+        "pagePath": "pages/distribution/index",
+        "text": "分销"
+      }
+    ]
+  },
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

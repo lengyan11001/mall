@@ -1,0 +1,76 @@
+.dist-title {
+  font-size: 36rpx;
+  font-weight: 900;
+}
+
+.mt {
+  margin-top: 20rpx;
+}
+
+.item-title {
+  max-width: 460rpx;
+  font-size: 28rpx;
+  font-weight: 800;
+}
+
+.section-heading {
+  font-size: 30rpx;
+  font-weight: 900;
+}
+
+.btn.small {
+  min-height: 62rpx;
+  padding: 0 20rpx;
+  font-size: 24rpx;
+}
+
+.address-head {
+  align-items: flex-start;
+}
+
+.address-preview {
+  margin-top: 18rpx;
+  padding: 18rpx;
+  border: 1rpx solid #dde4ee;
+  border-radius: 14rpx;
+  background: #f8fafc;
+}
+
+.address-person {
+  max-width: 460rpx;
+  font-size: 28rpx;
+  font-weight: 900;
+}
+
+.address-text {
+  margin-top: 8rpx;
+  line-height: 1.45;
+}
+
+.compact-empty {
+  margin-top: 18rpx;
+  padding: 28rpx 18rpx;
+}
+
+.address-form {
+  display: grid;
+  gap: 12rpx;
+  margin-top: 18rpx;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12rpx;
+}
+
+.default-row {
+  min-height: 64rpx;
+  color: #344054;
+  font-size: 26rpx;
+  font-weight: 800;
+}
+
+.compact-actions {
+  margin-top: 4rpx;
+}

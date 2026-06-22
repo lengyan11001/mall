@@ -1,0 +1,14 @@
+server.log
+server.err.log
+.env
+node_modules/
+secrets/
+project.private.config.json
+miniprogram/miniprogram_npm/
+npm-debug.log*
+data/
+public/generated/
+compiled-*.zip
+deploy/*.tar.gz
+deploy/*.zip
+deploy/*.png

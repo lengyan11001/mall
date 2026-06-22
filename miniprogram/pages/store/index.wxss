@@ -1,0 +1,503 @@
+.store-head {
+  display: flex;
+  gap: 18rpx;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.search-input {
+  flex: 0 0 280rpx;
+  min-width: 0;
+  height: 68rpx;
+  margin: 0;
+}
+
+.product-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18rpx;
+}
+
+.desc,
+.stock {
+  margin: 10rpx 0;
+  color: #667085;
+  font-size: 22rpx;
+  line-height: 1.4;
+}
+
+.product-card .desc {
+  display: -webkit-box;
+  min-height: 62rpx;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.product-card .row.between {
+  align-items: flex-end;
+}
+
+.product-card .pill {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: center;
+}
+
+.campaign-detail {
+  margin-top: 22rpx;
+}
+
+.campaign-cover {
+  width: 100%;
+  height: 320rpx;
+  margin-bottom: 18rpx;
+  border-radius: 14rpx;
+  background: #edf2f7;
+}
+
+.detail-head,
+.campaign-entry {
+  display: flex;
+  gap: 16rpx;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.detail-title,
+.entry-title {
+  font-size: 34rpx;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12rpx;
+  margin: 18rpx 0;
+}
+
+.metric-row > view {
+  padding: 16rpx;
+  border: 1rpx solid #dde4ee;
+  border-radius: 14rpx;
+  background: #f8fafc;
+}
+
+.metric-row text {
+  display: block;
+  color: #667085;
+  font-size: 22rpx;
+}
+
+.metric-value {
+  display: block;
+  margin-top: 8rpx;
+  color: #18212f;
+  font-size: 30rpx;
+  font-weight: 900;
+}
+
+.sub-card {
+  margin-top: 18rpx;
+  padding: 18rpx;
+  border: 1rpx solid #dde4ee;
+  border-radius: 14rpx;
+  background: #f8fafc;
+}
+
+.sub-card.compact {
+  padding: 16rpx;
+}
+
+.section-title.compact {
+  margin: 0 0 12rpx;
+  font-size: 28rpx;
+}
+
+.rich-detail {
+  display: block;
+  color: #344054;
+  font-size: 26rpx;
+  line-height: 1.65;
+}
+
+.form-line {
+  margin-top: 14rpx;
+}
+
+.form-line text {
+  display: block;
+  margin-bottom: 8rpx;
+  color: #344054;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+.campaign-entry {
+  margin-bottom: 22rpx;
+}
+
+.campaign-entry > view {
+  min-width: 0;
+}
+
+.campaign-entry .pill {
+  flex: 0 0 auto;
+}
+
+.campaign-card {
+  border-color: #ffd9a8;
+}
+
+.campaign-card .product-body {
+  padding: 16rpx;
+}
+
+.campaign-card .price {
+  font-size: 32rpx;
+}
+
+.campaign-card .pill.warn {
+  max-width: 148rpx;
+  font-size: 20rpx;
+}
+
+.campaign-card .actions {
+  gap: 10rpx;
+}
+
+.campaign-card .actions button {
+  min-height: 70rpx;
+  padding-right: 8rpx;
+  padding-left: 8rpx;
+  font-size: 24rpx;
+}
+
+.tile-value.small {
+  font-size: 26rpx;
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 14rpx;
+}
+
+.campaign-media {
+  width: 100%;
+  height: 260rpx;
+  margin-top: 10rpx;
+  border-radius: 14rpx;
+  background: #edf2f7;
+}
+
+.qrcode-row {
+  display: flex;
+  gap: 16rpx;
+  align-items: center;
+  margin-top: 14rpx;
+}
+
+.qrcode-row image {
+  width: 112rpx;
+  height: 112rpx;
+  flex: 0 0 auto;
+  border-radius: 12rpx;
+  background: #edf2f7;
+}
+
+.flow-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  padding: 24rpx;
+  background: rgba(15, 23, 42, 0.56);
+}
+
+.flow-panel {
+  width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 24rpx;
+  border-radius: 20rpx;
+  background: #ffffff;
+}
+
+.flow-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8rpx;
+  margin-bottom: 18rpx;
+}
+
+.flow-steps text {
+  min-height: 50rpx;
+  border-radius: 12rpx;
+  background: #edf2f7;
+  color: #667085;
+  font-size: 23rpx;
+  font-weight: 800;
+  line-height: 50rpx;
+  text-align: center;
+}
+
+.flow-steps text.active {
+  background: #18212f;
+  color: #ffffff;
+}
+
+.flow-head {
+  display: flex;
+  gap: 16rpx;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18rpx;
+}
+
+.flow-title {
+  color: #18212f;
+  font-size: 34rpx;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.flow-title.small {
+  margin-top: 14rpx;
+  font-size: 28rpx;
+  text-align: center;
+}
+
+.flow-close {
+  width: 58rpx;
+  height: 58rpx;
+  padding: 0;
+  border-radius: 50%;
+  background: #edf2f7;
+  color: #344054;
+  font-size: 38rpx;
+  line-height: 58rpx;
+}
+
+.order-product {
+  display: grid;
+  grid-template-columns: 180rpx 1fr;
+  gap: 18rpx;
+  padding: 16rpx;
+  border: 1rpx solid #dde4ee;
+  border-radius: 16rpx;
+  background: #f8fafc;
+}
+
+.order-product image {
+  width: 180rpx;
+  height: 180rpx;
+  border-radius: 12rpx;
+  background: #edf2f7;
+}
+
+.flow-form {
+  margin-top: 12rpx;
+}
+
+.flow-address {
+  margin-top: 16rpx;
+}
+
+.address-card {
+  padding: 16rpx;
+  border: 1rpx solid #dde4ee;
+  border-radius: 14rpx;
+  background: #f8fafc;
+}
+
+.address-card .desc {
+  margin-bottom: 0;
+}
+
+.address-person {
+  max-width: 420rpx;
+  font-size: 27rpx;
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.address-manage {
+  width: 100%;
+  min-height: 64rpx;
+  margin-top: 10rpx;
+  font-size: 24rpx;
+}
+
+.empty-address {
+  text-align: left;
+}
+
+.empty-address button {
+  width: 100%;
+  margin-top: 12rpx;
+}
+
+.flow-primary {
+  width: 100%;
+  margin-top: 20rpx;
+}
+
+.wheel-wrap {
+  position: relative;
+  width: 440rpx;
+  height: 440rpx;
+  margin: 24rpx auto 12rpx;
+}
+
+.wheel {
+  position: absolute;
+  inset: 0;
+  border: 12rpx solid #18212f;
+  border-radius: 50%;
+  background: conic-gradient(#fff4dd 0 45deg, #e9f7f1 45deg 90deg, #ffe7e3 90deg 135deg, #edf2f7 135deg 180deg, #fff4dd 180deg 225deg, #e9f7f1 225deg 270deg, #ffe7e3 270deg 315deg, #edf2f7 315deg 360deg);
+  transition: transform 3.1s cubic-bezier(0.16, 0.82, 0.22, 1);
+}
+
+.wheel-prize {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 130rpx;
+  margin-left: -65rpx;
+  margin-top: -18rpx;
+  color: #18212f;
+  font-size: 21rpx;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
+  transform-origin: 65rpx 18rpx;
+}
+
+.wheel-pointer {
+  position: absolute;
+  top: -4rpx;
+  left: 50%;
+  z-index: 3;
+  width: 0;
+  height: 0;
+  margin-left: -18rpx;
+  border-left: 18rpx solid transparent;
+  border-right: 18rpx solid transparent;
+  border-top: 46rpx solid #ef6f54;
+}
+
+.wheel-button {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 4;
+  width: 132rpx;
+  height: 132rpx;
+  margin: -66rpx 0 0 -66rpx;
+  border-radius: 50%;
+  background: #0f9f6e;
+  color: #ffffff;
+  font-size: 26rpx;
+}
+
+.lottery-result {
+  margin-top: 16rpx;
+  padding: 18rpx;
+  border-radius: 14rpx;
+  background: #fff4dd;
+  color: #946018;
+  text-align: center;
+}
+
+.lottery-result text {
+  font-size: 32rpx;
+  font-weight: 900;
+}
+
+.traffic-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 18rpx;
+  border: 1rpx solid #dde4ee;
+  border-radius: 16rpx;
+  background: #f8fafc;
+}
+
+.traffic-card image {
+  width: 360rpx;
+  height: 360rpx;
+  border-radius: 16rpx;
+  background: #ffffff;
+}
+
+.traffic-card button {
+  width: 100%;
+  margin-top: 14rpx;
+}
+
+.invite-panel {
+  width: 100%;
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 24rpx;
+  border-radius: 20rpx;
+  background: #ffffff;
+}
+
+.poster-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 720rpx;
+  overflow: hidden;
+  border-radius: 18rpx;
+  background: #edf2f7;
+}
+
+.invite-poster {
+  width: 100%;
+  height: 100%;
+}
+
+.invite-qrcode-card {
+  display: grid;
+  grid-template-columns: 150rpx 1fr;
+  gap: 18rpx;
+  align-items: center;
+  margin-top: 16rpx;
+  padding: 16rpx;
+  border: 1rpx solid #dde4ee;
+  border-radius: 16rpx;
+  background: #f8fafc;
+}
+
+.invite-qrcode-card image {
+  width: 150rpx;
+  height: 150rpx;
+  border-radius: 12rpx;
+  background: #ffffff;
+}
+
+.invite-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10rpx;
+  margin-top: 16rpx;
+}
+
+.invite-actions button {
+  min-height: 70rpx;
+  padding-right: 8rpx;
+  padding-left: 8rpx;
+  font-size: 24rpx;
+  white-space: nowrap;
+}

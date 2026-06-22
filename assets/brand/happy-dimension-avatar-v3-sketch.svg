@@ -1,0 +1,56 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="必火次元 KaiLcY 草稿风头像">
+  <defs>
+    <linearGradient id="paper" x1="90" y1="64" x2="940" y2="970" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F9FBF7"/>
+      <stop offset=".52" stop-color="#EEF3EF"/>
+      <stop offset="1" stop-color="#F7F3EC"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="294" y1="306" x2="760" y2="727" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00D9FF"/>
+      <stop offset=".46" stop-color="#7A5CFF"/>
+      <stop offset="1" stop-color="#FF3BA7"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#12203A" flood-opacity=".16"/>
+    </filter>
+    <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency=".012" numOctaves="3" seed="8" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.4" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#paper)"/>
+  <path d="M0 154C71 69 86 69 132 98c45 28 64 82 126 89 71 9 104 78 184 62 104-20 123-87 222-64 80 19 105 75 202 58 71-12 103-52 158-41"
+        fill="none" stroke="#233755" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity=".92" filter="url(#rough)"/>
+  <path d="M28 173C112 98 130 119 190 142c63 24 86 84 166 83 77-2 123 57 217 25 80-28 112-80 202-44 77 31 122 80 222 35"
+        fill="none" stroke="#00D9FF" stroke-width="8" stroke-linecap="round" opacity=".34"/>
+
+  <g filter="url(#shadow)">
+    <path d="M328 618C391 548 466 553 534 631c21 23 35 34 51 34 19 0 29-19 48-38 52-52 119-54 189-6"
+          fill="none" stroke="#233755" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)"/>
+    <path d="M325 620C382 544 428 508 468 421c26-58 46-105 81-133 25 36 43 86 56 142 12 55 27 105 59 147"
+          fill="none" stroke="#233755" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)"/>
+    <path d="M340 617C399 559 464 565 526 637c24 28 42 42 63 40 23-3 35-21 56-39 48-42 107-43 166-2"
+          fill="none" stroke="url(#accent)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity=".65"/>
+    <path d="M330 617C377 572 424 557 471 575" fill="none" stroke="#FF3BA7" stroke-width="10" stroke-linecap="round" opacity=".7"/>
+  </g>
+
+  <text x="512" y="762" text-anchor="middle"
+        font-family="Ink Free, Segoe Script, Comic Sans MS, Microsoft YaHei UI, sans-serif"
+        font-size="126"
+        font-weight="700"
+        fill="#233755"
+        letter-spacing="2"
+        filter="url(#rough)">KaiLcY</text>
+  <text x="512" y="838" text-anchor="middle"
+        font-family="Microsoft YaHei UI, Microsoft YaHei, SimHei, sans-serif"
+        font-size="42"
+        font-weight="800"
+        letter-spacing="10"
+        fill="#4D6078">必火次元</text>
+
+  <circle cx="217" cy="783" r="31" fill="#00D9FF" opacity=".9"/>
+  <circle cx="840" cy="776" r="34" fill="#FF3BA7" opacity=".88"/>
+  <path d="M197 847h82M238 806v82" stroke="#FFF05A" stroke-width="20" stroke-linecap="round"/>
+  <path d="M783 287h78M822 248v78" stroke="#42F7C8" stroke-width="19" stroke-linecap="round"/>
+</svg>

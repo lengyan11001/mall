@@ -1,0 +1,66 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>必火次元作战大屏</title>
+    <link rel="stylesheet" href="/styles.css?v=20260613-screen3" />
+  </head>
+  <body class="screen-body">
+    <main class="public-screen">
+      <div class="battle-screen">
+        <div class="battle-frame battle-frame-top"></div>
+        <div class="battle-frame battle-frame-bottom"></div>
+        <header class="battle-title">
+          <h2 id="battle-title">活动作战大屏</h2>
+        </header>
+        <section class="battle-layout">
+          <aside class="battle-left">
+            <div class="battle-panel battle-kpi">
+              <h3 id="battle-campaign-name">必火次元</h3>
+              <div class="battle-countdown">
+                <span>倒计时</span>
+                <strong id="battle-countdown">00天 00:00:00</strong>
+              </div>
+              <div class="battle-stats" id="battle-stats"></div>
+              <div class="battle-core">
+                <div class="battle-orbit">
+                  <span></span>
+                  <strong>快</strong>
+                </div>
+              </div>
+            </div>
+            <div class="battle-panel">
+              <div class="battle-panel-title">裂变分析</div>
+              <div class="battle-bars" id="battle-split-analysis"></div>
+            </div>
+          </aside>
+          <main class="battle-center">
+            <div class="battle-panel">
+              <div class="battle-panel-title" id="battle-entry-title">实时在线</div>
+              <div class="battle-table battle-live" id="battle-recent-entries"></div>
+            </div>
+            <div class="battle-panel">
+              <div class="battle-panel-title" id="battle-order-title">最近下单</div>
+              <div class="battle-table battle-orders" id="battle-recent-orders"></div>
+            </div>
+          </main>
+          <aside class="battle-right">
+            <div class="battle-panel">
+              <div class="battle-panel-title">粉丝排行榜</div>
+              <div class="battle-rank" id="battle-fan-rank"></div>
+            </div>
+            <div class="battle-panel">
+              <div class="battle-panel-title">收益排行榜</div>
+              <div class="battle-rank" id="battle-earning-rank"></div>
+            </div>
+          </aside>
+        </section>
+      </div>
+    </main>
+    <script src="/screen.js?v=20260613-screen3"></script>
+  </body>
+</html>

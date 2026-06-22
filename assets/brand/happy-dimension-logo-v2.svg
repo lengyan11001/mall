@@ -1,0 +1,70 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 560" role="img" aria-label="必火次元 logo v2">
+  <defs>
+    <linearGradient id="bg" x1="45" y1="43" x2="504" y2="501" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00E5FF"/>
+      <stop offset=".38" stop-color="#785CFF"/>
+      <stop offset=".74" stop-color="#FF3BA7"/>
+      <stop offset="1" stop-color="#FFE84D"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="125" y1="180" x2="428" y2="331" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3CF4FF"/>
+      <stop offset=".5" stop-color="#A77CFF"/>
+      <stop offset="1" stop-color="#FF5DB7"/>
+    </linearGradient>
+    <linearGradient id="word" x1="575" y1="112" x2="1337" y2="365" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#171C46"/>
+      <stop offset=".48" stop-color="#6A36CF"/>
+      <stop offset="1" stop-color="#FF3B96"/>
+    </linearGradient>
+    <filter id="shadow" x="-18%" y="-18%" width="136%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="16" stdDeviation="19" flood-color="#190B45" flood-opacity=".2"/>
+    </filter>
+  </defs>
+
+  <rect width="1800" height="560" rx="64" fill="#fff"/>
+  <path d="M1225 70c115 35 206 35 315-8" fill="none" stroke="#00E5FF" stroke-width="22" stroke-linecap="round" opacity=".32"/>
+  <path d="M1286 487c104-40 197-41 310-2" fill="none" stroke="#FF3BA7" stroke-width="22" stroke-linecap="round" opacity=".25"/>
+
+  <g filter="url(#shadow)">
+    <rect x="64" y="62" width="436" height="436" rx="118" fill="url(#bg)"/>
+    <path d="M138 184c82-49 181-49 288 0 35 17 58 52 62 96v122c0 59-49 107-108 107H184c-59 0-108-48-108-107V280c4-44 27-79 62-96Z" fill="#151A42"/>
+    <path d="M127 251c20-80 80-130 155-130s135 50 155 130l-50 52H177Z" fill="url(#hair)"/>
+    <rect x="135" y="228" width="294" height="224" rx="88" fill="#FFF8FF"/>
+    <path d="M141 300c43-27 92-41 147-42-22 33-51 54-88 61-26 5-46-1-59-19Z" fill="#8C68FF"/>
+    <path d="M423 300c-43-27-92-41-147-42 22 33 51 54 88 61 26 5 46-1 59-19Z" fill="#FF5DB7"/>
+    <rect x="179" y="304" width="64" height="76" rx="27" fill="#171C46"/>
+    <rect x="321" y="304" width="64" height="76" rx="27" fill="#171C46"/>
+    <circle cx="226" cy="324" r="12" fill="#65F4FF"/>
+    <circle cx="368" cy="324" r="12" fill="#65F4FF"/>
+    <path d="M240 405c27 22 58 22 85 0" fill="none" stroke="#FF3B96" stroke-width="16" stroke-linecap="round"/>
+    <rect x="341" y="416" width="116" height="58" rx="24" fill="#fff"/>
+    <text x="399" y="455" text-anchor="middle"
+          font-family="Arial Black, Microsoft YaHei UI, Microsoft YaHei, sans-serif"
+          font-size="30" font-weight="900" fill="#FF3B96">POP</text>
+  </g>
+
+  <text x="575" y="281"
+        font-family="Microsoft YaHei UI, Microsoft YaHei, SimHei, Arial, sans-serif"
+        font-size="148"
+        font-weight="900"
+        letter-spacing="3"
+        fill="url(#word)">必火次元</text>
+  <rect x="585" y="330" width="138" height="52" rx="26" fill="#171C46"/>
+  <text x="654" y="366" text-anchor="middle"
+        font-family="Arial Black, Microsoft YaHei UI, Microsoft YaHei, sans-serif"
+        font-size="28" font-weight="900" fill="#FFF56B">TOY</text>
+  <text x="748" y="370"
+        font-family="Microsoft YaHei UI, Microsoft YaHei, SimHei, Arial, sans-serif"
+        font-size="44"
+        font-weight="800"
+        letter-spacing="7"
+        fill="#4D587A">潮玩周边 · 手办 · 盲盒 · 收藏好物</text>
+
+  <path d="M1455 145h96M1503 97v96" stroke="#42FFD2" stroke-width="26" stroke-linecap="round"/>
+  <circle cx="1608" cy="338" r="48" fill="#FFF56B"/>
+  <circle cx="1690" cy="226" r="31" fill="#FF3BA7"/>
+  <rect x="1358" y="386" width="164" height="72" rx="33" fill="#171C46"/>
+  <text x="1440" y="435" text-anchor="middle"
+        font-family="Arial Black, Microsoft YaHei UI, Microsoft YaHei, sans-serif"
+        font-size="38" font-weight="900" fill="#65F4FF">NEW</text>
+</svg>

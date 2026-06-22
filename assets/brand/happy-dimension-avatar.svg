@@ -1,0 +1,48 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="必火次元头像">
+  <defs>
+    <linearGradient id="bg" x1="132" y1="107" x2="892" y2="917" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#12D4FF"/>
+      <stop offset=".48" stop-color="#7C5CFF"/>
+      <stop offset="1" stop-color="#FF4F9A"/>
+    </linearGradient>
+    <linearGradient id="portal" x1="246" y1="206" x2="780" y2="815" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF56B"/>
+      <stop offset=".42" stop-color="#43F7B6"/>
+      <stop offset="1" stop-color="#19B8FF"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="145%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="30" flood-color="#202040" flood-opacity=".28"/>
+    </filter>
+    <filter id="innerGlow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.20 0 0 0 0 0.93 0 0 0 0 1 0 0 0 .55 0"/>
+      <feBlend in="SourceGraphic" mode="screen"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <circle cx="831" cy="170" r="43" fill="#FFF56B" opacity=".9"/>
+  <circle cx="160" cy="762" r="32" fill="#43F7B6" opacity=".9"/>
+  <path d="M179 228c58-58 149-75 224-42" fill="none" stroke="#fff" stroke-width="26" stroke-linecap="round" opacity=".45"/>
+  <path d="M773 801c-60 56-151 70-225 34" fill="none" stroke="#fff" stroke-width="26" stroke-linecap="round" opacity=".36"/>
+
+  <g filter="url(#softShadow)">
+    <path d="M512 160 812 333v346L512 852 212 679V333L512 160Z" fill="#101935" opacity=".95"/>
+    <path d="M512 212 766 359v294L512 800 258 653V359L512 212Z" fill="url(#portal)" filter="url(#innerGlow)"/>
+    <path d="M512 212v588M258 359l508 294M766 359 258 653" fill="none" stroke="#fff" stroke-width="18" stroke-linecap="round" opacity=".32"/>
+    <path d="M512 292 696 398v212L512 716 328 610V398L512 292Z" fill="#fff" opacity=".18"/>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <rect x="327" y="376" width="370" height="244" rx="74" fill="#fff"/>
+    <rect x="380" y="431" width="92" height="92" rx="31" fill="#1B2347"/>
+    <rect x="552" y="431" width="92" height="92" rx="31" fill="#1B2347"/>
+    <path d="M430 563c43 43 121 43 164 0" fill="none" stroke="#FF4F9A" stroke-width="34" stroke-linecap="round"/>
+    <path d="M345 371 302 308M679 371l43-63" fill="none" stroke="#fff" stroke-width="34" stroke-linecap="round"/>
+  </g>
+
+  <g opacity=".9">
+    <path d="M243 742h84M285 700v84" stroke="#FFF56B" stroke-width="24" stroke-linecap="round"/>
+    <path d="M730 257h62M761 226v62" stroke="#43F7B6" stroke-width="22" stroke-linecap="round"/>
+  </g>
+</svg>

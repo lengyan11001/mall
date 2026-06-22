@@ -1,0 +1,69 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="empty">正在加载商品详情</view>
+
+  <view wx:elif="{{product}}" class="detail-card card">
+    <swiper class="gallery" indicator-dots="{{product.images.length > 1}}" autoplay="{{product.images.length > 1}}" circular>
+      <swiper-item wx:for="{{product.images}}" wx:key="*this">
+        <image class="gallery-image" src="{{item}}" mode="aspectFill"></image>
+      </swiper-item>
+    </swiper>
+
+    <view class="detail-head">
+      <view>
+        <view class="detail-title">{{product.title}}</view>
+        <view class="desc">{{product.subtitle || product.description}}</view>
+      </view>
+      <text class="pill">{{product.commission_label}}</text>
+    </view>
+
+    <view class="metric-row">
+      <view>
+        <text>售价</text>
+        <text class="metric-value">¥{{product.price}}</text>
+      </view>
+      <view>
+        <text>库存</text>
+        <text class="metric-value">{{product.stock}}</text>
+      </view>
+      <view>
+        <text>已售</text>
+        <text class="metric-value">{{product.sales}}</text>
+      </view>
+    </view>
+
+    <view class="sub-card">
+      <view class="section-title compact">商品详情</view>
+      <rich-text wx:if="{{product.detail_html}}" class="rich-detail" nodes="{{product.detail_html}}"></rich-text>
+      <view wx:else class="desc">{{product.description || '暂无详情'}}</view>
+    </view>
+
+    <view class="sticky-actions">
+      <button class="btn ghost" loading="{{posterLoading}}" bindtap="showPoster">{{posterLoading ? '生成中' : '海报'}}</button>
+      <button class="btn" bindtap="buyProduct">微信支付下单</button>
+    </view>
+  </view>
+
+  <view wx:if="{{posterVisible}}" class="poster-mask" bindtap="closePoster">
+    <view class="poster-panel" catchtap="noop">
+      <view class="poster-head">
+        <view>
+          <view class="poster-title">专属商品海报</view>
+          <view class="poster-sub">扫码到商品详情并绑定关系</view>
+        </view>
+        <button class="icon-btn" bindtap="closePoster">×</button>
+      </view>
+      <image class="poster-image" wx:if="{{poster.poster_url}}" src="{{poster.poster_url}}" mode="widthFix" bindtap="previewPoster"></image>
+      <view class="qrcode-row">
+        <image wx:if="{{poster.qrcode_url}}" src="{{poster.qrcode_url}}" mode="aspectFit" bindtap="previewQrcode"></image>
+        <view>
+          <view class="qrcode-title">二维码邀请码</view>
+          <view class="qrcode-scene">{{poster.scene}}</view>
+        </view>
+      </view>
+      <view class="poster-actions">
+        <button class="btn ghost" bindtap="copyPosterPath">复制路径</button>
+        <button class="btn" bindtap="previewPoster">查看海报</button>
+      </view>
+    </view>
+  </view>
+</view>
