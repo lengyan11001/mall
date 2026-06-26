@@ -4,6 +4,11 @@ const fs = require("fs");
 const path = require("path");
 const mysql = require("mysql2/promise");
 const { dbConfig } = require("../src/mysql-store");
+const { DEFAULT_LEGACY_APPID } = require("../src/tenant-config");
+
+function legacyAppId() {
+  return process.env.WECHAT_LEGACY_APP_ID || DEFAULT_LEGACY_APPID;
+}
 
 async function main() {
   const database = process.env.DB_NAME || "mall";
@@ -37,8 +42,61 @@ async function main() {
   await migrateAddresses(conn);
   await migrateScreenHeartbeats(conn);
   await migratePayments(conn);
+  await migrateTenancy(conn);
   await conn.end();
   console.log(`Migrated database ${database}`);
+}
+
+async function migrateTenancy(conn) {
+  const appid = legacyAppId();
+  const tables = [
+    "users",
+    "user_addresses",
+    "orders",
+    "acquisition_orders",
+    "acquisition_relations",
+    "acquisition_lottery_records",
+    "commissions",
+    "withdrawals",
+    "screen_heartbeats"
+  ];
+
+  for (const table of tables) {
+    await addColumnIfMissing(conn, table, "appid", "VARCHAR(32) NOT NULL DEFAULT '' AFTER id");
+    await conn.query(`UPDATE \`${table}\` SET appid = ? WHERE appid = '' OR appid IS NULL`, [appid]);
+  }
+
+  await dropIndexIfExists(conn, "users", "uk_users_openid");
+  await addIndexIfMissing(conn, "users", "uk_users_appid_openid", "UNIQUE KEY uk_users_appid_openid (appid, openid)");
+  await addIndexIfMissing(conn, "users", "idx_users_appid_created", "KEY idx_users_appid_created (appid, created_at)");
+
+  await addIndexIfMissing(conn, "user_addresses", "idx_user_addresses_app_user_default", "KEY idx_user_addresses_app_user_default (appid, user_id, is_default, id)");
+
+  await addIndexIfMissing(conn, "orders", "idx_orders_app_user_created", "KEY idx_orders_app_user_created (appid, user_id, created_at)");
+  await addIndexIfMissing(conn, "orders", "idx_orders_app_status_created", "KEY idx_orders_app_status_created (appid, status, created_at)");
+
+  await addIndexIfMissing(conn, "acquisition_orders", "idx_acquisition_orders_campaign_app", "KEY idx_acquisition_orders_campaign_app (appid, campaign_id, created_at)");
+  await addIndexIfMissing(conn, "acquisition_orders", "idx_acquisition_orders_inviter_app", "KEY idx_acquisition_orders_inviter_app (appid, campaign_id, inviter_id)");
+
+  await dropIndexIfExists(conn, "acquisition_relations", "uk_campaign_member");
+  await addIndexIfMissing(conn, "acquisition_relations", "uk_campaign_member", "UNIQUE KEY uk_campaign_member (appid, campaign_id, member_id)");
+  await addIndexIfMissing(conn, "acquisition_relations", "idx_relations_inviter_app", "KEY idx_relations_inviter_app (appid, campaign_id, inviter_id)");
+  await addIndexIfMissing(conn, "acquisition_relations", "idx_relations_parent_app", "KEY idx_relations_parent_app (appid, campaign_id, parent_inviter_id)");
+
+  await addIndexIfMissing(conn, "acquisition_lottery_records", "idx_lottery_campaign_app", "KEY idx_lottery_campaign_app (appid, campaign_id, created_at)");
+  await addIndexIfMissing(conn, "acquisition_lottery_records", "idx_lottery_user_app", "KEY idx_lottery_user_app (appid, user_id, created_at)");
+
+  await addIndexIfMissing(conn, "commissions", "idx_commissions_beneficiary_app", "KEY idx_commissions_beneficiary_app (appid, beneficiary_id, status)");
+  await addIndexIfMissing(conn, "commissions", "idx_commissions_buyer_app", "KEY idx_commissions_buyer_app (appid, buyer_id)");
+
+  await addIndexIfMissing(conn, "withdrawals", "idx_withdrawals_user_app", "KEY idx_withdrawals_user_app (appid, user_id, status)");
+  await addIndexIfMissing(conn, "withdrawals", "idx_withdrawals_status_app", "KEY idx_withdrawals_status_app (appid, status, created_at)");
+
+  await dropIndexIfExists(conn, "screen_heartbeats", "uk_screen_heartbeat_session");
+  await addIndexIfMissing(conn, "screen_heartbeats", "uk_screen_heartbeat_session", "UNIQUE KEY uk_screen_heartbeat_session (appid, session_key)");
+  await addIndexIfMissing(conn, "screen_heartbeats", "idx_screen_heartbeat_seen_app", "KEY idx_screen_heartbeat_seen_app (appid, last_seen_at)");
+  await addIndexIfMissing(conn, "screen_heartbeats", "idx_screen_heartbeat_campaign_seen_app", "KEY idx_screen_heartbeat_campaign_seen_app (appid, campaign_id, last_seen_at)");
+  await addIndexIfMissing(conn, "screen_heartbeats", "idx_screen_heartbeat_product_seen_app", "KEY idx_screen_heartbeat_product_seen_app (appid, product_id, last_seen_at)");
 }
 
 async function migrateProducts(conn) {
@@ -184,6 +242,18 @@ async function addIndexIfMissing(conn, tableName, indexName, definition) {
   );
   if (!Number(rows[0].count)) {
     await conn.query(`ALTER TABLE \`${tableName}\` ADD ${definition}`);
+  }
+}
+
+async function dropIndexIfExists(conn, tableName, indexName) {
+  const [rows] = await conn.query(
+    `SELECT COUNT(*) AS count
+     FROM information_schema.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?`,
+    [tableName, indexName]
+  );
+  if (Number(rows[0].count)) {
+    await conn.query(`ALTER TABLE \`${tableName}\` DROP INDEX \`${indexName}\``);
   }
 }
 

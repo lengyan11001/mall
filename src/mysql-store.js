@@ -18,6 +18,7 @@ const {
   parseProductInviteScene,
   productAssetPaths
 } = require("./invite-assets");
+const { defaultAppId } = require("./tenant-config");
 const {
   addressRow,
   campaignRow,
@@ -92,6 +93,7 @@ function normalizeUser(row) {
   if (!row) return null;
   return {
     id: row.id,
+    appid: row.appid || "",
     openid: row.openid,
     phone: row.phone || "",
     nickname: row.nickname,
@@ -101,6 +103,10 @@ function normalizeUser(row) {
     distributor_status: row.distributor_status,
     created_at: row.created_at
   };
+}
+
+function normalizeAppId(appid) {
+  return String(appid || defaultAppId()).trim();
 }
 
 function normalizeSettings(row) {
@@ -297,49 +303,56 @@ function createStore(pool = createPool()) {
     return normalizeSettings(row);
   }
 
-  async function getUser(userId, conn = pool) {
+  async function getUser(userId, conn = pool, appid = "") {
     const id = assertId(userId, "用户 ID");
-    const user = await one(conn, "SELECT * FROM users WHERE id = :id", { id });
+    const params = { id };
+    const appFilter = appid ? " AND appid = :appid" : "";
+    if (appid) params.appid = normalizeAppId(appid);
+    const user = await one(conn, `SELECT * FROM users WHERE id = :id${appFilter}`, params);
     if (!user) throw appError(404, "用户不存在");
     return normalizeUser(user);
   }
 
-  async function listUserAddresses(userId, conn = pool) {
+  async function listUserAddresses(userId, conn = pool, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const id = assertId(userId, "用户 ID");
-    const user = await one(conn, "SELECT id FROM users WHERE id = :id", { id });
+    const user = await one(conn, "SELECT id FROM users WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
     if (!user) throw appError(404, "用户不存在");
     const rows = await many(conn, `
       SELECT *
       FROM user_addresses
-      WHERE user_id = :userId
+      WHERE user_id = :userId AND appid = :appid
       ORDER BY is_default DESC, id DESC
-    `, { userId: id });
+    `, { userId: id, appid: scopedAppId });
     return rows.map(addressRow);
   }
 
-  async function getDefaultAddress(userId, conn = pool) {
+  async function getDefaultAddress(userId, conn = pool, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const id = assertId(userId, "用户 ID");
     const row = await one(conn, `
       SELECT *
       FROM user_addresses
-      WHERE user_id = :userId
+      WHERE user_id = :userId AND appid = :appid
       ORDER BY is_default DESC, id DESC
       LIMIT 1
-    `, { userId: id });
+    `, { userId: id, appid: scopedAppId });
     return row ? addressRow(row) : null;
   }
 
-  async function saveUserAddress(body) {
+  async function saveUserAddress(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     return tx(pool, async conn => {
       const userId = assertId(body.user_id, "用户 ID");
-      const user = await one(conn, "SELECT id FROM users WHERE id = :id FOR UPDATE", { id: userId });
+      const user = await one(conn, "SELECT id FROM users WHERE id = :id AND appid = :appid FOR UPDATE", { id: userId, appid: scopedAppId });
       if (!user) throw appError(404, "用户不存在");
 
       let existing = null;
       if (body.id) {
-        existing = await one(conn, "SELECT * FROM user_addresses WHERE id = :id AND user_id = :userId FOR UPDATE", {
+        existing = await one(conn, "SELECT * FROM user_addresses WHERE id = :id AND user_id = :userId AND appid = :appid FOR UPDATE", {
           id: assertId(body.id, "地址 ID"),
-          userId
+          userId,
+          appid: scopedAppId
         });
         if (!existing) throw appError(404, "收货地址不存在");
       }
@@ -349,10 +362,10 @@ function createStore(pool = createPool()) {
       if (!payload.phone) throw appError(422, "手机号必填");
       if (!payload.detail) throw appError(422, "详细地址必填");
 
-      const countRow = await one(conn, "SELECT COUNT(*) count FROM user_addresses WHERE user_id = :userId", { userId });
+      const countRow = await one(conn, "SELECT COUNT(*) count FROM user_addresses WHERE user_id = :userId AND appid = :appid", { userId, appid: scopedAppId });
       const shouldDefault = payload.isDefault || Number(countRow.count || 0) <= (existing ? 1 : 0);
       if (shouldDefault) {
-        await conn.query("UPDATE user_addresses SET is_default = 0 WHERE user_id = :userId", { userId });
+        await conn.query("UPDATE user_addresses SET is_default = 0 WHERE user_id = :userId AND appid = :appid", { userId, appid: scopedAppId });
       }
 
       if (existing) {
@@ -360,47 +373,51 @@ function createStore(pool = createPool()) {
           `UPDATE user_addresses
            SET receiver_name = :receiverName, phone = :phone, province = :province, city = :city,
                district = :district, detail = :detail, is_default = :isDefault
-           WHERE id = :id AND user_id = :userId`,
+           WHERE id = :id AND user_id = :userId AND appid = :appid`,
           {
             ...payload,
             isDefault: shouldDefault ? 1 : payload.isDefault,
             id: existing.id,
-            userId
+            userId,
+            appid: scopedAppId
           }
         );
       } else {
         await conn.query(
-          `INSERT INTO user_addresses (user_id, receiver_name, phone, province, city, district, detail, is_default)
-           VALUES (:userId, :receiverName, :phone, :province, :city, :district, :detail, :isDefault)`,
+          `INSERT INTO user_addresses (appid, user_id, receiver_name, phone, province, city, district, detail, is_default)
+           VALUES (:appid, :userId, :receiverName, :phone, :province, :city, :district, :detail, :isDefault)`,
           {
             ...payload,
+            appid: scopedAppId,
             userId,
             isDefault: shouldDefault ? 1 : payload.isDefault
           }
         );
       }
 
-      const defaultCount = await one(conn, "SELECT COUNT(*) count FROM user_addresses WHERE user_id = :userId AND is_default = 1", { userId });
+      const defaultCount = await one(conn, "SELECT COUNT(*) count FROM user_addresses WHERE user_id = :userId AND appid = :appid AND is_default = 1", { userId, appid: scopedAppId });
       if (!Number(defaultCount.count || 0)) {
         await conn.query(`
           UPDATE user_addresses
           SET is_default = 1
-          WHERE user_id = :userId
+          WHERE user_id = :userId AND appid = :appid
           ORDER BY id DESC
           LIMIT 1
-        `, { userId });
+        `, { userId, appid: scopedAppId });
       }
 
-      return listUserAddresses(userId, conn);
+      return listUserAddresses(userId, conn, scopedAppId);
     });
   }
 
-  async function resolveOrderAddress(conn, userId, body) {
+  async function resolveOrderAddress(conn, userId, body, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const addressId = Number(body.address_id || body.addressId || 0);
     if (addressId) {
-      const row = await one(conn, "SELECT * FROM user_addresses WHERE id = :id AND user_id = :userId", {
+      const row = await one(conn, "SELECT * FROM user_addresses WHERE id = :id AND user_id = :userId AND appid = :appid", {
         id: assertId(addressId, "地址 ID"),
-        userId
+        userId,
+        appid: scopedAppId
       });
       if (!row) throw appError(404, "收货地址不存在");
       const address = addressRow(row);
@@ -415,7 +432,7 @@ function createStore(pool = createPool()) {
       return { addressId: null, addressText: typedAddress };
     }
 
-    const fallback = await getDefaultAddress(userId, conn);
+    const fallback = await getDefaultAddress(userId, conn, scopedAppId);
     if (fallback) {
       return {
         addressId: fallback.id,
@@ -434,28 +451,31 @@ function createStore(pool = createPool()) {
     return Number(value || 0);
   }
 
-  async function bindParentIfPossible(conn, user, parentId) {
+  async function bindParentIfPossible(conn, user, parentId, appid = user?.appid || "") {
+    const scopedAppId = normalizeAppId(appid);
     const normalized = inviterIdFromScene(parentId);
     if (!normalized || user.parent_id || user.id === normalized) return user;
-    const parent = await one(conn, "SELECT id FROM users WHERE id = :id", { id: normalized });
+    const parent = await one(conn, "SELECT id FROM users WHERE id = :id AND appid = :appid", { id: normalized, appid: scopedAppId });
     if (!parent) return user;
     await conn.query(`
       UPDATE users
       SET parent_id = :parentId,
           first_parent_id = COALESCE(first_parent_id, :parentId)
-      WHERE id = :userId AND parent_id IS NULL
+      WHERE id = :userId AND appid = :appid AND parent_id IS NULL
     `, {
       parentId: normalized,
-      userId: user.id
+      userId: user.id,
+      appid: scopedAppId
     });
-    return getUser(user.id, conn);
+    return getUser(user.id, conn, scopedAppId);
   }
 
-  async function login(body) {
+  async function login(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     return tx(pool, async conn => {
       if (body.user_id) {
-        let user = await getUser(Number(body.user_id), conn);
-        user = await bindParentIfPossible(conn, user, body.parent_id || body.scene);
+        let user = await getUser(Number(body.user_id), conn, scopedAppId);
+        user = await bindParentIfPossible(conn, user, body.parent_id || body.scene, scopedAppId);
         return user;
       }
 
@@ -463,22 +483,24 @@ function createStore(pool = createPool()) {
       const initials = Array.from(nickname).slice(0, 2).join("").toUpperCase();
       const openid = body.openid ? String(body.openid).trim() : `dev_openid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const [result] = await conn.query(
-        `INSERT INTO users (openid, phone, nickname, avatar, parent_id, first_parent_id, distributor_status)
-         VALUES (:openid, :phone, :nickname, :avatar, NULL, NULL, 'pending')`,
+        `INSERT INTO users (appid, openid, phone, nickname, avatar, parent_id, first_parent_id, distributor_status)
+         VALUES (:appid, :openid, :phone, :nickname, :avatar, NULL, NULL, 'pending')`,
         {
+          appid: scopedAppId,
           openid,
           phone: String(body.phone || "").trim(),
           nickname,
           avatar: initials
         }
       );
-      let user = await getUser(result.insertId, conn);
-      user = await bindParentIfPossible(conn, user, body.parent_id || body.scene);
+      let user = await getUser(result.insertId, conn, scopedAppId);
+      user = await bindParentIfPossible(conn, user, body.parent_id || body.scene, scopedAppId);
       return user;
     });
   }
 
-  async function wechatLogin(body) {
+  async function wechatLogin(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     return tx(pool, async conn => {
       const openid = String(body.openid || "").trim();
       if (!openid) throw appError(422, "missing openid");
@@ -486,12 +508,13 @@ function createStore(pool = createPool()) {
       const nickname = String(body.userInfo?.nickName || displayNameFromOpenid(openid)).trim().slice(0, 24);
       const avatar = String(body.userInfo?.avatarUrl || avatarFromName(nickname)).trim().slice(0, 255);
       const token = newSessionToken();
-      let user = await one(conn, "SELECT * FROM users WHERE openid = :openid FOR UPDATE", { openid });
+      let user = await one(conn, "SELECT * FROM users WHERE appid = :appid AND openid = :openid FOR UPDATE", { appid: scopedAppId, openid });
       if (!user) {
         const [result] = await conn.query(
-          `INSERT INTO users (openid, phone, nickname, avatar, parent_id, first_parent_id, distributor_status, session_token, session_key_cipher)
-           VALUES (:openid, '', :nickname, :avatar, NULL, NULL, 'pending', :token, :sessionKey)`,
+          `INSERT INTO users (appid, openid, phone, nickname, avatar, parent_id, first_parent_id, distributor_status, session_token, session_key_cipher)
+           VALUES (:appid, :openid, '', :nickname, :avatar, NULL, NULL, 'pending', :token, :sessionKey)`,
           {
+            appid: scopedAppId,
             openid,
             nickname,
             avatar,
@@ -499,7 +522,7 @@ function createStore(pool = createPool()) {
             sessionKey: String(body.sessionKey || "")
           }
         );
-        user = await getUser(result.insertId, conn);
+        user = await getUser(result.insertId, conn, scopedAppId);
       } else {
         await conn.query(
           `UPDATE users
@@ -507,37 +530,40 @@ function createStore(pool = createPool()) {
                session_key_cipher = :sessionKey,
                nickname = CASE WHEN nickname = '' THEN :nickname ELSE nickname END,
                avatar = CASE WHEN avatar = '' THEN :avatar ELSE avatar END
-           WHERE id = :id`,
+           WHERE id = :id AND appid = :appid`,
           {
             id: user.id,
+            appid: scopedAppId,
             token,
             sessionKey: String(body.sessionKey || ""),
             nickname,
             avatar
           }
         );
-        user = await getUser(user.id, conn);
+        user = await getUser(user.id, conn, scopedAppId);
       }
-      user = await bindParentIfPossible(conn, user, scene);
+      user = await bindParentIfPossible(conn, user, scene, scopedAppId);
       return { user, token };
     });
   }
 
-  async function bindInviter(body) {
+  async function bindInviter(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     return tx(pool, async conn => {
-      const user = await getUser(Number(body.user_id), conn);
+      const user = await getUser(Number(body.user_id), conn, scopedAppId);
       if (user.parent_id) throw appError(409, "该用户已经绑定推荐人");
-      return bindParentIfPossible(conn, user, body.parent_id || body.scene);
+      return bindParentIfPossible(conn, user, body.parent_id || body.scene, scopedAppId);
     });
   }
 
-  async function applyDistributor(body) {
+  async function applyDistributor(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     return tx(pool, async conn => {
-      const user = await getUser(Number(body.user_id), conn);
+      const user = await getUser(Number(body.user_id), conn, scopedAppId);
       if (user.distributor_status !== "approved") {
-        await conn.query("UPDATE users SET distributor_status = 'pending' WHERE id = :id", { id: user.id });
+        await conn.query("UPDATE users SET distributor_status = 'pending' WHERE id = :id AND appid = :appid", { id: user.id, appid: scopedAppId });
       }
-      return getUser(user.id, conn);
+      return getUser(user.id, conn, scopedAppId);
     });
   }
 
@@ -700,7 +726,7 @@ function createStore(pool = createPool()) {
     return campaign;
   }
 
-  async function listPublicAcquisitionCampaigns({ keyword = "" }) {
+  async function listPublicAcquisitionCampaigns({ keyword = "" } = {}) {
     const params = { keyword: `%${cleanText(keyword, "", 80)}%` };
     const filters = ["ac.status = 'published'", "ac.start_at <= UTC_TIMESTAMP()", "ac.end_at >= UTC_TIMESTAMP()"];
     if (cleanText(keyword)) filters.push("(ac.name LIKE :keyword OR p.title LIKE :keyword OR p.product_no LIKE :keyword)");
@@ -713,7 +739,7 @@ function createStore(pool = createPool()) {
     return campaigns.slice(0, 1);
   }
 
-  async function getActiveAcquisitionCampaign(userId = null, scene = "") {
+  async function getActiveAcquisitionCampaign(userId = null, scene = "", appid = "") {
     const rows = await many(pool, `
       ${campaignSelect()}
       WHERE ac.status = 'published'
@@ -723,10 +749,11 @@ function createStore(pool = createPool()) {
       LIMIT 1
     `);
     if (!rows.length) return null;
-    return getPublicAcquisitionCampaign(rows[0].id, userId, scene);
+    return getPublicAcquisitionCampaign(rows[0].id, userId, scene, appid);
   }
 
-  async function getPublicAcquisitionCampaign(campaignId, userId = null, scene = "") {
+  async function getPublicAcquisitionCampaign(campaignId, userId = null, scene = "", appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const campaign = await getAcquisitionCampaign(campaignId);
     if (campaign.status !== "published") throw appError(404, "活动未发布");
     const now = Date.now();
@@ -740,15 +767,15 @@ function createStore(pool = createPool()) {
         SELECT COALESCE(SUM(o.quantity), 0) total
         FROM acquisition_orders ao
         JOIN orders o ON o.id = ao.order_id
-        WHERE ao.campaign_id = :campaignId AND o.user_id = :userId AND o.status IN ('paid','shipped','received')
-      `, { campaignId: campaign.id, userId: Number(userId) });
+        WHERE ao.campaign_id = :campaignId AND o.user_id = :userId AND o.appid = :appid AND o.status IN ('paid','shipped','received')
+      `, { campaignId: campaign.id, userId: Number(userId), appid: scopedAppId });
       campaign.purchased_count = Number(purchased?.total || 0);
       campaign.remaining_user_limit = campaign.per_user_limit
         ? Math.max(0, Number(campaign.per_user_limit) - campaign.purchased_count)
         : 0;
       campaign.relation = campaign.relation_mode === "activity_visit"
-        ? await lockAcquisitionRelation(pool, campaign, Number(userId), scene, "visit")
-        : await acquisitionRelationSnapshot(pool, campaign, Number(userId), scene, "visit");
+        ? await lockAcquisitionRelation(pool, campaign, Number(userId), scene, "visit", scopedAppId)
+        : await acquisitionRelationSnapshot(pool, campaign, Number(userId), scene, "visit", scopedAppId);
     }
     if (campaign.active_qrcodes?.length) {
       const qrcodeId = campaign.active_qrcodes[0].id;
@@ -1119,43 +1146,55 @@ function createStore(pool = createPool()) {
     `, params);
   }
 
-  async function listOrders({ userId = null }) {
-    const rows = await loadOrderRows(userId ? "WHERE o.user_id = :userId" : "", { userId });
+  async function listOrders({ userId = null, appid = "" } = {}) {
+    const filters = [];
+    const params = {};
+    if (appid) {
+      filters.push("o.appid = :appid");
+      params.appid = normalizeAppId(appid);
+    }
+    if (userId) {
+      filters.push("o.user_id = :userId");
+      params.userId = userId;
+    }
+    const rows = await loadOrderRows(filters.length ? `WHERE ${filters.join(" AND ")}` : "", params);
     return rows.map(orderRow);
   }
 
   async function createCommissionsForOrder(conn, order, buyer, product) {
+    const scopedAppId = normalizeAppId(order.appid || buyer.appid);
     if (!buyer.parent_id) return [];
     const appSettings = await settings(conn);
     const created = [];
-    const parent = await one(conn, "SELECT * FROM users WHERE id = :id AND distributor_status = 'approved'", { id: buyer.parent_id });
+    const parent = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid AND distributor_status = 'approved'", { id: buyer.parent_id, appid: scopedAppId });
     if (parent) {
       const amount = money(order.amount * Number(product.commission_rate || appSettings.commission_level_1));
       const [result] = await conn.query(
-        `INSERT INTO commissions (order_id, beneficiary_id, buyer_id, level, amount, status)
-         VALUES (:orderId, :beneficiaryId, :buyerId, 1, :amount, 'pending')`,
-        { orderId: order.id, beneficiaryId: parent.id, buyerId: buyer.id, amount }
+        `INSERT INTO commissions (appid, order_id, beneficiary_id, buyer_id, level, amount, status)
+         VALUES (:appid, :orderId, :beneficiaryId, :buyerId, 1, :amount, 'pending')`,
+        { appid: scopedAppId, orderId: order.id, beneficiaryId: parent.id, buyerId: buyer.id, amount }
       );
-      created.push({ id: result.insertId, order_id: order.id, beneficiary_id: parent.id, buyer_id: buyer.id, level: 1, amount, status: "pending" });
+      created.push({ id: result.insertId, appid: scopedAppId, order_id: order.id, beneficiary_id: parent.id, buyer_id: buyer.id, level: 1, amount, status: "pending" });
     }
     if (parent && parent.parent_id) {
-      const grandParent = await one(conn, "SELECT * FROM users WHERE id = :id AND distributor_status = 'approved'", { id: parent.parent_id });
+      const grandParent = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid AND distributor_status = 'approved'", { id: parent.parent_id, appid: scopedAppId });
       if (grandParent) {
         const amount = money(order.amount * Number(appSettings.commission_level_2 || 0));
         const [result] = await conn.query(
-          `INSERT INTO commissions (order_id, beneficiary_id, buyer_id, level, amount, status)
-           VALUES (:orderId, :beneficiaryId, :buyerId, 2, :amount, 'pending')`,
-          { orderId: order.id, beneficiaryId: grandParent.id, buyerId: buyer.id, amount }
+          `INSERT INTO commissions (appid, order_id, beneficiary_id, buyer_id, level, amount, status)
+           VALUES (:appid, :orderId, :beneficiaryId, :buyerId, 2, :amount, 'pending')`,
+          { appid: scopedAppId, orderId: order.id, beneficiaryId: grandParent.id, buyerId: buyer.id, amount }
         );
-        created.push({ id: result.insertId, order_id: order.id, beneficiary_id: grandParent.id, buyer_id: buyer.id, level: 2, amount, status: "pending" });
+        created.push({ id: result.insertId, appid: scopedAppId, order_id: order.id, beneficiary_id: grandParent.id, buyer_id: buyer.id, level: 2, amount, status: "pending" });
       }
     }
     return created;
   }
 
-  async function acquisitionRelationSnapshot(conn, campaign, userId, scene = "", lockReason = "visit") {
+  async function acquisitionRelationSnapshot(conn, campaign, userId, scene = "", lockReason = "visit", appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const memberId = assertId(userId, "用户 ID");
-    const member = await one(conn, "SELECT * FROM users WHERE id = :id", { id: memberId });
+    const member = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid", { id: memberId, appid: scopedAppId });
     if (!member) throw appError(404, "用户不存在");
     const sceneInviter = sceneInviterId(scene, campaign.id, memberId);
     let inviterId = null;
@@ -1174,7 +1213,7 @@ function createStore(pool = createPool()) {
     }
 
     if (inviterId) {
-      const inviter = await one(conn, "SELECT id, parent_id, first_parent_id FROM users WHERE id = :id", { id: inviterId });
+      const inviter = await one(conn, "SELECT id, parent_id, first_parent_id FROM users WHERE id = :id AND appid = :appid", { id: inviterId, appid: scopedAppId });
       if (!inviter) inviterId = null;
       else parentInviterId = campaign.relation_mode === "first"
         ? (inviter.first_parent_id || inviter.parent_id || null)
@@ -1182,6 +1221,7 @@ function createStore(pool = createPool()) {
     }
 
     return {
+      appid: scopedAppId,
       campaign_id: campaign.id,
       member_id: memberId,
       inviter_id: inviterId,
@@ -1194,15 +1234,17 @@ function createStore(pool = createPool()) {
     };
   }
 
-  async function lockAcquisitionRelation(conn, campaign, userId, scene = "", lockReason = "visit") {
+  async function lockAcquisitionRelation(conn, campaign, userId, scene = "", lockReason = "visit", appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const memberId = assertId(userId, "用户 ID");
-    const existing = await one(conn, "SELECT * FROM acquisition_relations WHERE campaign_id = :campaignId AND member_id = :memberId FOR UPDATE", {
+    const existing = await one(conn, "SELECT * FROM acquisition_relations WHERE appid = :appid AND campaign_id = :campaignId AND member_id = :memberId FOR UPDATE", {
+      appid: scopedAppId,
       campaignId: campaign.id,
       memberId
     });
     if (existing && (campaign.relation_mode === "activity_visit" || campaign.relation_mode === "activity_paid")) return existing;
 
-    const relation = await acquisitionRelationSnapshot(conn, campaign, memberId, scene, lockReason);
+    const relation = await acquisitionRelationSnapshot(conn, campaign, memberId, scene, lockReason, scopedAppId);
     if (existing) {
       await conn.query(
         `UPDATE acquisition_relations
@@ -1212,8 +1254,9 @@ function createStore(pool = createPool()) {
              indirect_team_leader_id = :indirectTeamLeaderId,
              locked_by = :lockedBy,
              unlocked_at = NULL
-         WHERE campaign_id = :campaignId AND member_id = :memberId`,
+         WHERE appid = :appid AND campaign_id = :campaignId AND member_id = :memberId`,
         {
+          appid: scopedAppId,
           campaignId: campaign.id,
           memberId,
           inviterId: relation.inviter_id,
@@ -1223,7 +1266,8 @@ function createStore(pool = createPool()) {
           lockedBy: relation.locked_by
         }
       );
-      return one(conn, "SELECT * FROM acquisition_relations WHERE campaign_id = :campaignId AND member_id = :memberId", {
+      return one(conn, "SELECT * FROM acquisition_relations WHERE appid = :appid AND campaign_id = :campaignId AND member_id = :memberId", {
+        appid: scopedAppId,
         campaignId: campaign.id,
         memberId
       });
@@ -1231,13 +1275,14 @@ function createStore(pool = createPool()) {
 
     await conn.query(
       `INSERT INTO acquisition_relations (
-        campaign_id, member_id, inviter_id, parent_inviter_id, team_leader_id,
+        appid, campaign_id, member_id, inviter_id, parent_inviter_id, team_leader_id,
         indirect_team_leader_id, locked_by
       ) VALUES (
-        :campaignId, :memberId, :inviterId, :parentInviterId, :teamLeaderId,
+        :appid, :campaignId, :memberId, :inviterId, :parentInviterId, :teamLeaderId,
         :indirectTeamLeaderId, :lockedBy
       )`,
       {
+        appid: scopedAppId,
         campaignId: campaign.id,
         memberId,
         inviterId: relation.inviter_id,
@@ -1247,7 +1292,8 @@ function createStore(pool = createPool()) {
         lockedBy: relation.locked_by
       }
     );
-    return one(conn, "SELECT * FROM acquisition_relations WHERE campaign_id = :campaignId AND member_id = :memberId", {
+    return one(conn, "SELECT * FROM acquisition_relations WHERE appid = :appid AND campaign_id = :campaignId AND member_id = :memberId", {
+      appid: scopedAppId,
       campaignId: campaign.id,
       memberId
     });
@@ -1267,56 +1313,64 @@ function createStore(pool = createPool()) {
     };
   }
 
-  async function acquisitionBuyerOrderCount(conn, campaignId, userId) {
+  async function acquisitionBuyerOrderCount(conn, campaignId, userId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const row = await one(conn, `
       SELECT COUNT(*) count
       FROM acquisition_orders ao
       JOIN orders o ON o.id = ao.order_id
       WHERE ao.campaign_id = :campaignId
         AND o.user_id = :userId
+        AND o.appid = :appid
         AND o.status IN ('paid','shipped','received')
-    `, { campaignId, userId });
+    `, { campaignId, userId, appid: scopedAppId });
     return Number(row?.count || 0);
   }
 
-  async function acquisitionDirectOrderCount(conn, campaignId, inviterId) {
+  async function acquisitionDirectOrderCount(conn, campaignId, inviterId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const row = await one(conn, `
       SELECT COUNT(*) count
       FROM acquisition_orders ao
       JOIN orders o ON o.id = ao.order_id
       WHERE ao.campaign_id = :campaignId
         AND ao.inviter_id = :inviterId
+        AND ao.appid = :appid
         AND o.status IN ('paid','shipped','received')
-    `, { campaignId, inviterId });
+    `, { campaignId, inviterId, appid: scopedAppId });
     return Number(row?.count || 0);
   }
 
   async function canReceiveAcquisitionReward(conn, campaign, userId, options = {}) {
+    const scopedAppId = normalizeAppId(options.appid || options.appId || campaign.appid);
     if (!userId) return false;
     if (options.buyerId && Number(userId) === Number(options.buyerId)) return false;
-    const user = await one(conn, "SELECT id, distributor_status FROM users WHERE id = :id", { id: userId });
+    const user = await one(conn, "SELECT id, distributor_status FROM users WHERE id = :id AND appid = :appid", { id: userId, appid: scopedAppId });
     if (!user) return false;
     if (options.teamReward) return true;
     if (campaign.reward_rule === "member_level" && user.distributor_status !== "approved") return false;
     if (campaign.reward_permission === "buyer_only") {
-      return (await acquisitionBuyerOrderCount(conn, campaign.id, userId)) > 0;
+      return (await acquisitionBuyerOrderCount(conn, campaign.id, userId, scopedAppId)) > 0;
     }
     return true;
   }
 
   async function insertAcquisitionCommission(conn, order, buyer, campaign, reward) {
+    const scopedAppId = normalizeAppId(order.appid || buyer.appid || campaign.appid);
     if (!reward.userId || money(reward.amount) <= 0) return null;
     const allowed = await canReceiveAcquisitionReward(conn, campaign, reward.userId, {
       buyerId: buyer.id,
-      teamReward: reward.teamReward
+      teamReward: reward.teamReward,
+      appid: scopedAppId
     });
     if (!allowed) return null;
     const status = acquisitionCommissionStatus(campaign);
     const availableAt = status === "withdrawable" ? new Date() : null;
     const [result] = await conn.query(
-      `INSERT INTO commissions (order_id, beneficiary_id, buyer_id, level, amount, status, available_at)
-       VALUES (:orderId, :beneficiaryId, :buyerId, :level, :amount, :status, :availableAt)`,
+      `INSERT INTO commissions (appid, order_id, beneficiary_id, buyer_id, level, amount, status, available_at)
+       VALUES (:appid, :orderId, :beneficiaryId, :buyerId, :level, :amount, :status, :availableAt)`,
       {
+        appid: scopedAppId,
         orderId: order.id,
         beneficiaryId: reward.userId,
         buyerId: buyer.id,
@@ -1328,6 +1382,7 @@ function createStore(pool = createPool()) {
     );
     return {
       id: result.insertId,
+      appid: scopedAppId,
       order_id: order.id,
       beneficiary_id: reward.userId,
       buyer_id: buyer.id,
@@ -1339,6 +1394,7 @@ function createStore(pool = createPool()) {
   }
 
   async function createAcquisitionCommissions(conn, order, buyer, campaign, relation) {
+    const scopedAppId = normalizeAppId(order.appid || buyer.appid || campaign.appid);
     const created = [];
     const quantity = Math.max(1, Number(order.quantity || 1));
     const rewardRows = [
@@ -1353,7 +1409,7 @@ function createStore(pool = createPool()) {
     }
     if (relation?.inviter_id) {
       const extra = acquisitionRewardExtraConfig(campaign);
-      const directCount = await acquisitionDirectOrderCount(conn, campaign.id, relation.inviter_id);
+      const directCount = await acquisitionDirectOrderCount(conn, campaign.id, relation.inviter_id, scopedAppId);
       if (campaign.reward_multiple_enabled && extra.multipleEvery > 0 && extra.multipleAmount > 0 && directCount > 0 && directCount % extra.multipleEvery === 0) {
         rewardRows.push({ level: 21, userId: relation.inviter_id, amount: extra.multipleAmount });
       }
@@ -1369,6 +1425,7 @@ function createStore(pool = createPool()) {
   }
 
   async function queueInstantAcquisitionPayouts(conn, order, campaign, commissions) {
+    const scopedAppId = normalizeAppId(order.appid || campaign.appid);
     if (campaign.reward_issue_way !== "instant" || !commissions.length) return [];
     const appSettings = await settings(conn);
     const status = appSettings.auto_pay_enabled ? "paidout" : "approved";
@@ -1378,9 +1435,10 @@ function createStore(pool = createPool()) {
     const created = [];
     for (const commission of commissions) {
       const [result] = await conn.query(
-        `INSERT INTO withdrawals (user_id, amount, status, note, reviewed_at, review_note)
-         VALUES (:userId, :amount, :status, :note, UTC_TIMESTAMP(), :reviewNote)`,
+        `INSERT INTO withdrawals (appid, user_id, amount, status, note, reviewed_at, review_note)
+         VALUES (:appid, :userId, :amount, :status, :note, UTC_TIMESTAMP(), :reviewNote)`,
         {
+          appid: scopedAppId,
           userId: commission.beneficiary_id,
           amount: money(commission.amount),
           status,
@@ -1420,28 +1478,30 @@ function createStore(pool = createPool()) {
     return normalized.length ? normalized : [thanksPrize()];
   }
 
-  async function availableLotteryPrize(conn, campaign, userId, prize) {
+  async function availableLotteryPrize(conn, campaign, userId, prize, appid = "") {
+    const scopedAppId = normalizeAppId(appid || campaign.appid);
     if (prize.type === "thanks") return true;
     if (prize.quantity > 0) {
       const used = await one(conn, `
         SELECT COUNT(*) used
         FROM acquisition_lottery_records
-        WHERE campaign_id = :campaignId AND prize_name = :prizeName AND status <> 'failed'
-      `, { campaignId: campaign.id, prizeName: prize.name });
+        WHERE appid = :appid AND campaign_id = :campaignId AND prize_name = :prizeName AND status <> 'failed'
+      `, { appid: scopedAppId, campaignId: campaign.id, prizeName: prize.name });
       if (Number(used.used || 0) >= prize.quantity) return false;
     }
     if (prize.limit_per_user > 0) {
       const userUsed = await one(conn, `
         SELECT COUNT(*) used
         FROM acquisition_lottery_records
-        WHERE campaign_id = :campaignId AND user_id = :userId AND prize_name = :prizeName AND status <> 'failed'
-      `, { campaignId: campaign.id, userId, prizeName: prize.name });
+        WHERE appid = :appid AND campaign_id = :campaignId AND user_id = :userId AND prize_name = :prizeName AND status <> 'failed'
+      `, { appid: scopedAppId, campaignId: campaign.id, userId, prizeName: prize.name });
       if (Number(userUsed.used || 0) >= prize.limit_per_user) return false;
     }
     return true;
   }
 
   async function runAcquisitionLottery(conn, campaign, order, buyer) {
+    const scopedAppId = normalizeAppId(order.appid || buyer.appid || campaign.appid);
     if (!campaign.lottery_enabled) return null;
     const config = campaign.lottery_config || {};
     const prizes = normalizedLotteryPrizes(campaign);
@@ -1455,19 +1515,20 @@ function createStore(pool = createPool()) {
         break;
       }
     }
-    if (!(await availableLotteryPrize(conn, campaign, buyer.id, selected))) {
+    if (!(await availableLotteryPrize(conn, campaign, buyer.id, selected, scopedAppId))) {
       selected = thanksPrize();
     }
     const status = selected.type === "thanks" || config.cash_direct ? "issued" : "pending";
     const [result] = await conn.query(
       `INSERT INTO acquisition_lottery_records (
-        campaign_id, order_id, user_id, prize_name, prize_type, prize_image,
+        appid, campaign_id, order_id, user_id, prize_name, prize_type, prize_image,
         quantity, amount, status
       ) VALUES (
-        :campaignId, :orderId, :userId, :prizeName, :prizeType, :prizeImage,
+        :appid, :campaignId, :orderId, :userId, :prizeName, :prizeType, :prizeImage,
         :quantity, :amount, :status
       )`,
       {
+        appid: scopedAppId,
         campaignId: campaign.id,
         orderId: order.id,
         userId: buyer.id,
@@ -1481,6 +1542,7 @@ function createStore(pool = createPool()) {
     );
     return {
       id: result.insertId,
+      appid: scopedAppId,
       campaign_id: campaign.id,
       order_id: order.id,
       user_id: buyer.id,
@@ -1502,22 +1564,24 @@ function createStore(pool = createPool()) {
     if (!row) return null;
     return {
       campaignId: row.campaign_id,
+      appid: row.appid || "",
       formValues: parseDbJson(row.form_values, {}),
       scene: row.scene || ""
     };
   }
 
-  async function closeUnpaidOrder(orderId) {
+  async function closeUnpaidOrder(orderId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     return tx(pool, async conn => {
       const id = assertId(orderId, "订单 ID");
-      const order = await one(conn, "SELECT * FROM orders WHERE id = :id FOR UPDATE", { id });
+      const order = await one(conn, "SELECT * FROM orders WHERE id = :id AND appid = :appid FOR UPDATE", { id, appid: scopedAppId });
       if (!order) throw appError(404, "订单不存在");
       if (order.status !== "unpaid") {
         const rows = await loadOrderRows("WHERE o.id = :id", { id }, conn);
         return orderRow(rows[0]);
       }
       const meta = await acquisitionOrderMeta(conn, order.id);
-      await conn.query("UPDATE orders SET status = 'closed' WHERE id = :id", { id });
+      await conn.query("UPDATE orders SET status = 'closed' WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
       await conn.query(
         "UPDATE products SET stock = stock + :quantity, sales = GREATEST(sales - :quantity, 0) WHERE id = :productId",
         { quantity: order.quantity, productId: order.product_id }
@@ -1534,8 +1598,9 @@ function createStore(pool = createPool()) {
   }
 
   async function finalizePaidOrder(conn, order, payInfo = {}) {
+    const scopedAppId = normalizeAppId(order.appid);
     if (["paid", "shipped", "received"].includes(order.status)) {
-      const lotteryRecord = await one(conn, "SELECT * FROM acquisition_lottery_records WHERE order_id = :orderId ORDER BY id DESC LIMIT 1", { orderId: order.id });
+      const lotteryRecord = await one(conn, "SELECT * FROM acquisition_lottery_records WHERE appid = :appid AND order_id = :orderId ORDER BY id DESC LIMIT 1", { appid: scopedAppId, orderId: order.id });
       const rows = await loadOrderRows("WHERE o.id = :id", { id: order.id }, conn);
       return {
         order: orderRow(rows[0]),
@@ -1544,7 +1609,7 @@ function createStore(pool = createPool()) {
       };
     }
     if (order.status !== "unpaid") throw appError(409, "订单状态不能支付");
-    const buyer = await one(conn, "SELECT * FROM users WHERE id = :id FOR UPDATE", { id: order.user_id });
+    const buyer = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid FOR UPDATE", { id: order.user_id, appid: scopedAppId });
     if (!buyer) throw appError(404, "用户不存在");
     const product = await one(conn, "SELECT * FROM products WHERE id = :id", { id: order.product_id });
     if (!product) throw appError(404, "商品不存在");
@@ -1557,15 +1622,16 @@ function createStore(pool = createPool()) {
       const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id FOR UPDATE`, { id: meta.campaignId });
       if (!row) throw appError(404, "拓客宝活动不存在");
       campaign = campaignRow(row);
-      relation = await lockAcquisitionRelation(conn, campaign, buyer.id, meta.scene, "paid");
+      relation = await lockAcquisitionRelation(conn, campaign, buyer.id, meta.scene, "paid", scopedAppId);
       await conn.query(`
         UPDATE acquisition_orders
         SET inviter_id = :inviterId,
             parent_inviter_id = :parentInviterId,
             team_leader_id = :teamLeaderId,
             indirect_team_leader_id = :indirectTeamLeaderId
-        WHERE order_id = :orderId
+        WHERE appid = :appid AND order_id = :orderId
       `, {
+        appid: scopedAppId,
         orderId: order.id,
         inviterId: relation?.inviter_id || null,
         parentInviterId: relation?.parent_inviter_id || null,
@@ -1578,12 +1644,13 @@ function createStore(pool = createPool()) {
       SET status = 'paid',
           transaction_id = CASE WHEN :transactionId <> '' THEN :transactionId ELSE transaction_id END,
           paid_at = COALESCE(paid_at, UTC_TIMESTAMP())
-      WHERE id = :id
+      WHERE id = :id AND appid = :appid
     `, {
       id: order.id,
+      appid: scopedAppId,
       transactionId: cleanText(payInfo.transaction_id, "", 64)
     });
-    const paidOrder = await one(conn, "SELECT * FROM orders WHERE id = :id", { id: order.id });
+    const paidOrder = await one(conn, "SELECT * FROM orders WHERE id = :id AND appid = :appid", { id: order.id, appid: scopedAppId });
     if (campaign) {
       commissions = await createAcquisitionCommissions(conn, paidOrder, buyer, campaign, relation);
       await queueInstantAcquisitionPayouts(conn, paidOrder, campaign, commissions);
@@ -1599,12 +1666,14 @@ function createStore(pool = createPool()) {
     };
   }
 
-  async function createOrder(body) {
+  async function createOrder(body, tenantOrAppid = "") {
+    const tenant = typeof tenantOrAppid === "object" ? tenantOrAppid : null;
+    const scopedAppId = normalizeAppId(tenant?.appid || tenantOrAppid || body.appid);
     const created = await tx(pool, async conn => {
       const userId = assertId(body.user_id, "用户 ID");
       const campaignId = Number(body.campaign_id || 0);
       const quantity = Math.max(1, Math.min(99, Number(body.quantity || 1)));
-      const buyer = await one(conn, "SELECT * FROM users WHERE id = :id FOR UPDATE", { id: userId });
+      const buyer = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid FOR UPDATE", { id: userId, appid: scopedAppId });
       if (!buyer) throw appError(404, "用户不存在");
       let productId = campaignId ? Number(body.product_id || 0) : assertId(body.product_id, "商品 ID");
       let campaign = null;
@@ -1620,8 +1689,8 @@ function createStore(pool = createPool()) {
           SELECT COALESCE(SUM(o.quantity), 0) total
           FROM acquisition_orders ao
           JOIN orders o ON o.id = ao.order_id
-          WHERE ao.campaign_id = :campaignId AND o.user_id = :userId AND o.status IN ('paid','shipped','received')
-        `, { campaignId: campaign.id, userId: buyer.id });
+          WHERE ao.campaign_id = :campaignId AND o.user_id = :userId AND o.appid = :appid AND o.status IN ('paid','shipped','received')
+        `, { campaignId: campaign.id, userId: buyer.id, appid: scopedAppId });
         if (campaign.per_user_limit && Number(purchased.total || 0) + quantity > campaign.per_user_limit) throw appError(409, `每人最多购买 ${campaign.per_user_limit} 件`);
         if (Number(campaign.stock) - Number(campaign.sold_count || 0) < quantity) throw appError(409, "活动库存不足");
         productId = campaign.product_id;
@@ -1629,7 +1698,7 @@ function createStore(pool = createPool()) {
       const product = await one(conn, "SELECT * FROM products WHERE id = :id AND status = 'on' FOR UPDATE", { id: productId });
       if (!product) throw appError(404, "商品不存在或已下架");
       if (Number(product.stock) < quantity) throw appError(409, "库存不足");
-      const orderAddress = await resolveOrderAddress(conn, buyer.id, body);
+      const orderAddress = await resolveOrderAddress(conn, buyer.id, body, scopedAppId);
 
       const amount = money(Number(campaign ? campaign.lead_price : product.price) * quantity);
       await conn.query(
@@ -1646,9 +1715,10 @@ function createStore(pool = createPool()) {
         if (!stockResult.affectedRows) throw appError(409, "活动库存不足");
       }
       const [result] = await conn.query(
-        `INSERT INTO orders (user_id, product_id, quantity, amount, status, pay_provider, address, address_id)
-         VALUES (:userId, :productId, :quantity, :amount, 'unpaid', 'wechat', :address, :addressId)`,
+        `INSERT INTO orders (appid, user_id, product_id, quantity, amount, status, pay_provider, address, address_id)
+         VALUES (:appid, :userId, :productId, :quantity, :amount, 'unpaid', 'wechat', :address, :addressId)`,
         {
+          appid: scopedAppId,
           userId: buyer.id,
           productId: product.id,
           quantity,
@@ -1663,11 +1733,12 @@ function createStore(pool = createPool()) {
       if (campaign) {
         await conn.query(
           `INSERT INTO acquisition_orders (
-            campaign_id, order_id, form_values, scene
+            appid, campaign_id, order_id, form_values, scene
           ) VALUES (
-            :campaignId, :orderId, :formValues, :scene
+            :appid, :campaignId, :orderId, :formValues, :scene
           )`,
           {
+            appid: scopedAppId,
             campaignId: campaign.id,
             orderId: order.id,
             formValues: jsonField(body.form_values, {}),
@@ -1691,9 +1762,9 @@ function createStore(pool = createPool()) {
         amount: created.order.amount,
         openid: created.buyer.openid,
         attach: created.campaign ? JSON.stringify({ campaign_id: created.campaign.id }) : ""
-      });
+      }, tenant || { appid: scopedAppId });
     } catch (error) {
-      await closeUnpaidOrder(created.order.id);
+      await closeUnpaidOrder(created.order.id, scopedAppId);
       throw error;
     }
     await pool.query("UPDATE orders SET prepay_id = :prepayId WHERE id = :id", {
@@ -1706,22 +1777,24 @@ function createStore(pool = createPool()) {
         provider: "wechat-jsapi",
         out_trade_no: created.order.out_trade_no,
         prepay_id: prepay.prepay_id,
-        params: jsapiPayParams(prepay.prepay_id)
+        params: jsapiPayParams(prepay.prepay_id, tenant || { appid: scopedAppId })
       },
       commissions: [],
       lottery_record: null
     };
   }
 
-  async function syncWechatPayment(orderId) {
+  async function syncWechatPayment(orderId, tenantOrAppid = "") {
+    const tenant = typeof tenantOrAppid === "object" ? tenantOrAppid : null;
+    const scopedAppId = normalizeAppId(tenant?.appid || tenantOrAppid);
     const id = assertId(orderId, "订单 ID");
-    const order = await one(pool, "SELECT * FROM orders WHERE id = :id", { id });
+    const order = await one(pool, "SELECT * FROM orders WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
     if (!order) throw appError(404, "订单不存在");
     if (["paid", "shipped", "received"].includes(order.status)) {
       return tx(pool, conn => finalizePaidOrder(conn, order));
     }
     if (!order.out_trade_no) throw appError(409, "订单缺少商户单号");
-    const result = await queryOrder(order.out_trade_no);
+    const result = await queryOrder(order.out_trade_no, tenant || { appid: scopedAppId });
     if (result.trade_state !== "SUCCESS") {
       throw appError(409, result.trade_state_desc || "支付尚未完成", { trade_state: result.trade_state });
     }
@@ -1729,7 +1802,7 @@ function createStore(pool = createPool()) {
       throw appError(409, "支付金额不一致");
     }
     return tx(pool, async conn => {
-      const locked = await one(conn, "SELECT * FROM orders WHERE id = :id FOR UPDATE", { id });
+      const locked = await one(conn, "SELECT * FROM orders WHERE id = :id AND appid = :appid FOR UPDATE", { id, appid: scopedAppId });
       return finalizePaidOrder(conn, locked, { transaction_id: result.transaction_id || "" });
     });
   }
@@ -1747,16 +1820,17 @@ function createStore(pool = createPool()) {
     });
   }
 
-  async function confirmOrder(orderId) {
+  async function confirmOrder(orderId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     return tx(pool, async conn => {
       const id = assertId(orderId, "订单 ID");
-      const order = await one(conn, "SELECT * FROM orders WHERE id = :id FOR UPDATE", { id });
+      const order = await one(conn, "SELECT * FROM orders WHERE id = :id AND appid = :appid FOR UPDATE", { id, appid: scopedAppId });
       if (!order) throw appError(404, "订单不存在");
       if (!["paid", "shipped"].includes(order.status)) throw appError(409, "当前订单状态不能确认收货");
-      await conn.query("UPDATE orders SET status = 'received', received_at = UTC_TIMESTAMP() WHERE id = :id", { id });
+      await conn.query("UPDATE orders SET status = 'received', received_at = UTC_TIMESTAMP() WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
       await conn.query(
-        "UPDATE commissions SET status = 'withdrawable', available_at = UTC_TIMESTAMP() WHERE order_id = :id AND status = 'pending'",
-        { id }
+        "UPDATE commissions SET status = 'withdrawable', available_at = UTC_TIMESTAMP() WHERE order_id = :id AND appid = :appid AND status = 'pending'",
+        { id, appid: scopedAppId }
       );
       const rows = await loadOrderRows("WHERE o.id = :id", { id }, conn);
       return orderRow(rows[0]);
@@ -1807,23 +1881,34 @@ function createStore(pool = createPool()) {
     });
   }
 
-  async function userAvailableBalance(userId, conn = pool) {
+  async function userAvailableBalance(userId, conn = pool, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const rows = await many(conn, `
       SELECT
         COALESCE(SUM(CASE WHEN c.status = 'withdrawable' THEN c.amount ELSE 0 END), 0) gross,
         (
           SELECT COALESCE(SUM(w.amount), 0)
           FROM withdrawals w
-          WHERE w.user_id = :userId AND w.status <> 'rejected'
+          WHERE w.user_id = :userId AND w.appid = :appid AND w.status <> 'rejected'
         ) locked
       FROM commissions c
-      WHERE c.beneficiary_id = :userId
-    `, { userId });
+      WHERE c.beneficiary_id = :userId AND c.appid = :appid
+    `, { userId, appid: scopedAppId });
     return money(Math.max(0, Number(rows[0].gross || 0) - Number(rows[0].locked || 0)));
   }
 
-  async function listCommissions({ userId = null } = {}) {
-    const where = userId ? "WHERE c.beneficiary_id = :userId" : "";
+  async function listCommissions({ userId = null, appid = "" } = {}) {
+    const filters = [];
+    const params = {};
+    if (appid) {
+      filters.push("c.appid = :appid");
+      params.appid = normalizeAppId(appid);
+    }
+    if (userId) {
+      filters.push("c.beneficiary_id = :userId");
+      params.userId = userId;
+    }
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
     const rows = await many(pool, `
       SELECT
         c.*,
@@ -1841,44 +1926,45 @@ function createStore(pool = createPool()) {
       LEFT JOIN users b ON b.id = c.beneficiary_id
       ${where}
       ORDER BY c.created_at DESC, c.id DESC
-    `, { userId });
+    `, params);
     return rows.map(commissionRow);
   }
 
-  async function distributionSummary(userId) {
+  async function distributionSummary(userId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const id = assertId(userId, "用户 ID");
-    const user = await getUser(id);
+    const user = await getUser(id, pool, scopedAppId);
     const appSettings = await settings();
     const directCustomers = await many(pool, `
-      SELECT u.*, (SELECT COUNT(*) FROM users child WHERE child.parent_id = u.id) children_count
+      SELECT u.*, (SELECT COUNT(*) FROM users child WHERE child.parent_id = u.id AND child.appid = :appid) children_count
       FROM users u
-      WHERE u.parent_id = :id
+      WHERE u.parent_id = :id AND u.appid = :appid
       ORDER BY u.created_at DESC
-    `, { id });
+    `, { id, appid: scopedAppId });
     const [indirect] = await many(pool, `
       SELECT COUNT(*) indirect_count
       FROM users child
       JOIN users direct ON direct.id = child.parent_id
-      WHERE direct.parent_id = :id
-    `, { id });
-    const commissions = await listCommissions({ userId: id });
+      WHERE direct.parent_id = :id AND child.appid = :appid AND direct.appid = :appid
+    `, { id, appid: scopedAppId });
+    const commissions = await listCommissions({ userId: id, appid: scopedAppId });
     const rows = await many(pool, `
       SELECT
         COALESCE(SUM(CASE WHEN status <> 'canceled' AND DATE(created_at) = UTC_DATE() THEN amount ELSE 0 END), 0) today,
         COALESCE(SUM(CASE WHEN status <> 'canceled' THEN amount ELSE 0 END), 0) total,
         COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0) pending
       FROM commissions
-      WHERE beneficiary_id = :id
-    `, { id });
-    const withdrawnRows = await many(pool, "SELECT COALESCE(SUM(amount), 0) withdrawn FROM withdrawals WHERE user_id = :id AND status = 'paidout'", { id });
-    const withdrawals = await many(pool, "SELECT * FROM withdrawals WHERE user_id = :id ORDER BY created_at DESC, id DESC", { id });
+      WHERE beneficiary_id = :id AND appid = :appid
+    `, { id, appid: scopedAppId });
+    const withdrawnRows = await many(pool, "SELECT COALESCE(SUM(amount), 0) withdrawn FROM withdrawals WHERE user_id = :id AND appid = :appid AND status = 'paidout'", { id, appid: scopedAppId });
+    const withdrawals = await many(pool, "SELECT * FROM withdrawals WHERE user_id = :id AND appid = :appid ORDER BY created_at DESC, id DESC", { id, appid: scopedAppId });
     return {
       user,
       settings: appSettings,
       today: money(rows[0].today),
       total: money(rows[0].total),
       pending: money(rows[0].pending),
-      withdrawable: await userAvailableBalance(id),
+      withdrawable: await userAvailableBalance(id, pool, scopedAppId),
       withdrawn: money(withdrawnRows[0].withdrawn),
       direct_count: directCustomers.length,
       indirect_count: Number(indirect.indirect_count || 0),
@@ -1888,30 +1974,33 @@ function createStore(pool = createPool()) {
     };
   }
 
-  async function createWithdrawal(body) {
+  async function createWithdrawal(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     return tx(pool, async conn => {
       const userId = assertId(body.user_id, "用户 ID");
       const amount = money(body.amount);
-      await getUser(userId, conn);
+      await getUser(userId, conn, scopedAppId);
       const appSettings = await settings(conn);
       if (amount < Number(appSettings.min_withdrawal || 0)) {
         throw appError(422, `最低提现金额为 ${appSettings.min_withdrawal} 元`);
       }
-      const available = await userAvailableBalance(userId, conn);
+      const available = await userAvailableBalance(userId, conn, scopedAppId);
       if (amount > available) {
         throw appError(422, "可提现余额不足", { available });
       }
       const [result] = await conn.query(
-        `INSERT INTO withdrawals (user_id, amount, status, note)
-         VALUES (:userId, :amount, 'pending', :note)`,
-        { userId, amount, note: String(body.note || "").slice(0, 80) }
+        `INSERT INTO withdrawals (appid, user_id, amount, status, note)
+         VALUES (:appid, :userId, :amount, 'pending', :note)`,
+        { appid: scopedAppId, userId, amount, note: String(body.note || "").slice(0, 80) }
       );
       return one(conn, "SELECT * FROM withdrawals WHERE id = :id", { id: result.insertId });
     });
   }
 
-  async function sharePoster({ userId, productId }) {
-    const user = await getUser(userId);
+  async function sharePoster({ userId, productId }, tenantOrAppid = "") {
+    const tenant = typeof tenantOrAppid === "object" ? tenantOrAppid : null;
+    const scopedAppId = normalizeAppId(tenant?.appid || tenantOrAppid);
+    const user = await getUser(userId, pool, scopedAppId);
     const product = await getPublicProduct(productId);
     const appSettings = await settings();
     const paths = productAssetPaths(product.id, user.id);
@@ -1923,7 +2012,7 @@ function createStore(pool = createPool()) {
         scene: paths.scene,
         page: "pages/product/detail",
         checkPath: false
-      });
+      }, tenant || { appid: scopedAppId });
       await fs.mkdir(path.dirname(paths.qrcodePath), { recursive: true });
       await fs.writeFile(paths.qrcodePath, qrcodeBuffer);
     }
@@ -1949,8 +2038,10 @@ function createStore(pool = createPool()) {
     };
   }
 
-  async function campaignInvitePoster({ userId, campaignId }) {
-    const user = await getUser(userId);
+  async function campaignInvitePoster({ userId, campaignId }, tenantOrAppid = "") {
+    const tenant = typeof tenantOrAppid === "object" ? tenantOrAppid : null;
+    const scopedAppId = normalizeAppId(tenant?.appid || tenantOrAppid);
+    const user = await getUser(userId, pool, scopedAppId);
     const campaign = await getAcquisitionCampaign(campaignId);
     if (campaign.status !== "published") throw appError(404, "活动未发布");
     const now = Date.now();
@@ -1967,7 +2058,7 @@ function createStore(pool = createPool()) {
         scene: paths.scene,
         page: "pages/home/index",
         checkPath: false
-      });
+      }, tenant || { appid: scopedAppId });
       await fs.mkdir(path.dirname(paths.qrcodePath), { recursive: true });
       await fs.writeFile(paths.qrcodePath, qrcodeBuffer);
     }
@@ -2238,10 +2329,11 @@ function createStore(pool = createPool()) {
     };
   }
 
-  async function screenHeartbeat(body) {
+  async function screenHeartbeat(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     return tx(pool, async conn => {
       const userId = assertId(body.user_id, "用户 ID");
-      await getUser(userId, conn);
+      await getUser(userId, conn, scopedAppId);
       const rawCampaignId = Number(body.campaign_id || 0);
       const rawProductId = Number(body.product_id || 0);
       const campaignId = Number.isInteger(rawCampaignId) && rawCampaignId > 0 ? rawCampaignId : null;
@@ -2249,6 +2341,7 @@ function createStore(pool = createPool()) {
       if (campaignId) await getAcquisitionCampaign(campaignId, conn);
       if (productId) await getPublicProduct(productId, conn);
       const payload = {
+        appid: scopedAppId,
         userId,
         campaignId,
         productId,
@@ -2258,10 +2351,10 @@ function createStore(pool = createPool()) {
       };
       await conn.query(`
         INSERT INTO screen_heartbeats (
-          user_id, campaign_id, product_id, scene, page, session_key, last_seen_at
+          appid, user_id, campaign_id, product_id, scene, page, session_key, last_seen_at
         )
         VALUES (
-          :userId, :campaignId, :productId, :scene, :page, :sessionKey, UTC_TIMESTAMP()
+          :appid, :userId, :campaignId, :productId, :scene, :page, :sessionKey, UTC_TIMESTAMP()
         )
         ON DUPLICATE KEY UPDATE
           user_id = VALUES(user_id),
@@ -2297,7 +2390,7 @@ function createStore(pool = createPool()) {
       } : null,
       direct_count: Number(row.direct_count || 0),
       total_commission: money(row.total_commission),
-      available_balance: await userAvailableBalance(row.id)
+      available_balance: await userAvailableBalance(row.id, pool, row.appid)
     })));
   }
 

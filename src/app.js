@@ -5,6 +5,11 @@ const path = require("path");
 const { URL } = require("url");
 const { codeToSession } = require("./wechat");
 const { decryptResource, verifyWechatpaySignature } = require("./wechat-pay");
+const {
+  paymentTenants,
+  publicTenant,
+  resolveTenantFromRequest
+} = require("./tenant-config");
 
 const publicDir = path.join(__dirname, "..", "public");
 
@@ -111,6 +116,23 @@ function requireAdmin(req, res, isApi = false) {
   return false;
 }
 
+function decodeWechatPayNotification(headers, rawBody) {
+  const tenants = paymentTenants();
+  for (const tenant of tenants) {
+    try {
+      if (!verifyWechatpaySignature(headers, rawBody, tenant)) continue;
+      const payload = JSON.parse(rawBody || "{}");
+      return {
+        tenant,
+        resource: decryptResource(payload.resource || {}, tenant)
+      };
+    } catch {
+      // Try the next configured payment tenant.
+    }
+  }
+  return null;
+}
+
 function serveStatic(req, res, pathname, hostname = "") {
   const isCmsHost = hostname.split(":")[0].toLowerCase() === "mallcms.bhzn.top";
   const routePath = pathname === "/"
@@ -169,6 +191,11 @@ function createServer({ store }) {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/api/app/config") {
+      ok(res, publicTenant(resolveTenantFromRequest(req, searchParams)));
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/api/auth/login") {
       if (process.env.NODE_ENV === "production" && process.env.ENABLE_DEV_LOGIN !== "1") {
         fail(res, 403, "生产环境请使用微信小程序登录");
@@ -199,46 +226,57 @@ function createServer({ store }) {
 
     if (req.method === "POST" && pathname === "/api/wechat/login") {
       const body = await readBody(req);
-      const session = await codeToSession(body.code);
+      const tenant = resolveTenantFromRequest(req, searchParams, body);
+      const session = await codeToSession(body.code, tenant);
       ok(res, await store.wechatLogin({
+        appid: tenant.appid,
         openid: session.openid,
         unionid: session.unionid || "",
         sessionKey: session.session_key || "",
         scene: body.scene || body.parent_id || "",
         userInfo: body.userInfo || null
-      }));
+      }, tenant.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/me") {
-      ok(res, await store.getUser(Number(searchParams.get("user_id"))));
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      ok(res, await store.getUser(Number(searchParams.get("user_id")), undefined, tenant.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/user/addresses") {
-      ok(res, await store.listUserAddresses(Number(searchParams.get("user_id"))));
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      ok(res, await store.listUserAddresses(Number(searchParams.get("user_id")), undefined, tenant.appid));
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/user/addresses") {
-      ok(res, await store.saveUserAddress(await readBody(req)));
+      const body = await readBody(req);
+      const tenant = resolveTenantFromRequest(req, searchParams, body);
+      ok(res, await store.saveUserAddress(body, tenant.appid));
       return;
     }
 
     const userAddressId = matchId(pathname, "/api/user/addresses/");
     if (req.method === "PUT" && userAddressId) {
       const body = await readBody(req);
-      ok(res, await store.saveUserAddress({ ...body, id: userAddressId }));
+      const tenant = resolveTenantFromRequest(req, searchParams, body);
+      ok(res, await store.saveUserAddress({ ...body, id: userAddressId }, tenant.appid));
       return;
     }
 
     if (req.method === "PATCH" && pathname === "/api/me/inviter") {
-      ok(res, await store.bindInviter(await readBody(req)));
+      const body = await readBody(req);
+      const tenant = resolveTenantFromRequest(req, searchParams, body);
+      ok(res, await store.bindInviter(body, tenant.appid));
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/distribution/apply") {
-      ok(res, await store.applyDistributor(await readBody(req)));
+      const body = await readBody(req);
+      const tenant = resolveTenantFromRequest(req, searchParams, body);
+      ok(res, await store.applyDistributor(body, tenant.appid));
       return;
     }
 
@@ -264,85 +302,99 @@ function createServer({ store }) {
     }
 
     if (req.method === "GET" && pathname === "/api/acquisition/active") {
+      const tenant = resolveTenantFromRequest(req, searchParams);
       ok(res, await store.getActiveAcquisitionCampaign(
         Number(searchParams.get("user_id")) || null,
-        searchParams.get("scene") || ""
+        searchParams.get("scene") || "",
+        tenant.appid
       ));
       return;
     }
 
     const publicAcquisitionId = matchId(pathname, "/api/acquisition/campaigns/");
     if (req.method === "GET" && publicAcquisitionId && pathname === `/api/acquisition/campaigns/${publicAcquisitionId}/invite-poster`) {
+      const tenant = resolveTenantFromRequest(req, searchParams);
       ok(res, await store.campaignInvitePoster({
         campaignId: publicAcquisitionId,
         userId: Number(searchParams.get("user_id"))
-      }));
+      }, tenant));
       return;
     }
 
     if (req.method === "GET" && publicAcquisitionId) {
+      const tenant = resolveTenantFromRequest(req, searchParams);
       ok(res, await store.getPublicAcquisitionCampaign(
         publicAcquisitionId,
         Number(searchParams.get("user_id")) || null,
-        searchParams.get("scene") || ""
+        searchParams.get("scene") || "",
+        tenant.appid
       ));
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/orders") {
-      ok(res, await store.createOrder(await readBody(req)));
+      const body = await readBody(req);
+      const tenant = resolveTenantFromRequest(req, searchParams, body);
+      ok(res, await store.createOrder(body, tenant));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/orders") {
-      ok(res, await store.listOrders({ userId: Number(searchParams.get("user_id")) || null }));
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      ok(res, await store.listOrders({ userId: Number(searchParams.get("user_id")) || null, appid: tenant.appid }));
       return;
     }
 
     const orderId = matchId(pathname, "/api/orders/");
     if (req.method === "POST" && orderId && pathname.endsWith("/pay/sync")) {
-      ok(res, await store.syncWechatPayment(orderId));
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      ok(res, await store.syncWechatPayment(orderId, tenant));
       return;
     }
 
     if (req.method === "POST" && orderId && pathname.endsWith("/close")) {
-      ok(res, await store.closeUnpaidOrder(orderId));
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      ok(res, await store.closeUnpaidOrder(orderId, tenant.appid));
       return;
     }
 
     if (req.method === "POST" && orderId && pathname.endsWith("/confirm")) {
-      ok(res, await store.confirmOrder(orderId));
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      ok(res, await store.confirmOrder(orderId, tenant.appid));
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/pay/wechat/notify") {
       const rawBody = await readRawBody(req);
-      if (!verifyWechatpaySignature(req.headers, rawBody)) {
+      const decoded = decodeWechatPayNotification(req.headers, rawBody);
+      if (!decoded) {
         send(res, 401, { code: "FAIL", message: "签名验证失败" });
         return;
       }
-      const payload = JSON.parse(rawBody || "{}");
-      const resource = decryptResource(payload.resource || {});
-      await store.handleWechatPayNotification(resource);
+      await store.handleWechatPayNotification(decoded.resource);
       send(res, 200, { code: "SUCCESS", message: "成功" });
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/distribution/summary") {
-      ok(res, await store.distributionSummary(Number(searchParams.get("user_id"))));
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      ok(res, await store.distributionSummary(Number(searchParams.get("user_id")), tenant.appid));
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/withdrawals") {
-      ok(res, await store.createWithdrawal(await readBody(req)));
+      const body = await readBody(req);
+      const tenant = resolveTenantFromRequest(req, searchParams, body);
+      ok(res, await store.createWithdrawal(body, tenant.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/share-poster") {
+      const tenant = resolveTenantFromRequest(req, searchParams);
       ok(res, await store.sharePoster({
         userId: Number(searchParams.get("user_id")),
         productId: Number(searchParams.get("product_id"))
-      }));
+      }, tenant));
       return;
     }
 
@@ -352,7 +404,9 @@ function createServer({ store }) {
     }
 
     if (req.method === "POST" && pathname === "/api/screen/heartbeat") {
-      ok(res, await store.screenHeartbeat(await readBody(req)));
+      const body = await readBody(req);
+      const tenant = resolveTenantFromRequest(req, searchParams, body);
+      ok(res, await store.screenHeartbeat(body, tenant.appid));
       return;
     }
 

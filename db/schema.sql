@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 CREATE TABLE IF NOT EXISTS users (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   openid VARCHAR(96) NOT NULL,
   phone VARCHAR(32) NOT NULL DEFAULT '',
   nickname VARCHAR(64) NOT NULL,
@@ -21,8 +22,9 @@ CREATE TABLE IF NOT EXISTS users (
   session_key_cipher VARCHAR(255) NOT NULL DEFAULT '',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_users_openid (openid),
+  UNIQUE KEY uk_users_appid_openid (appid, openid),
   UNIQUE KEY uk_users_session_token (session_token),
+  KEY idx_users_appid_created (appid, created_at),
   KEY idx_users_parent (parent_id),
   KEY idx_users_first_parent (first_parent_id),
   KEY idx_users_distributor_status (distributor_status),
@@ -32,6 +34,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS user_addresses (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   user_id BIGINT UNSIGNED NOT NULL,
   receiver_name VARCHAR(64) NOT NULL DEFAULT '',
   phone VARCHAR(32) NOT NULL DEFAULT '',
@@ -42,6 +45,7 @@ CREATE TABLE IF NOT EXISTS user_addresses (
   is_default TINYINT(1) NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_user_addresses_app_user_default (appid, user_id, is_default, id),
   KEY idx_user_addresses_user_default (user_id, is_default, id),
   CONSTRAINT fk_user_addresses_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -166,6 +170,7 @@ CREATE TABLE IF NOT EXISTS acquisition_qrcodes (
 
 CREATE TABLE IF NOT EXISTS acquisition_relations (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   campaign_id BIGINT UNSIGNED NOT NULL,
   member_id BIGINT UNSIGNED NOT NULL,
   inviter_id BIGINT UNSIGNED NULL,
@@ -175,9 +180,9 @@ CREATE TABLE IF NOT EXISTS acquisition_relations (
   locked_by ENUM('system','visit','paid','manual') NOT NULL DEFAULT 'system',
   entered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   unlocked_at TIMESTAMP NULL DEFAULT NULL,
-  UNIQUE KEY uk_campaign_member (campaign_id, member_id),
-  KEY idx_relations_inviter (campaign_id, inviter_id),
-  KEY idx_relations_parent (campaign_id, parent_inviter_id),
+  UNIQUE KEY uk_campaign_member (appid, campaign_id, member_id),
+  KEY idx_relations_inviter (appid, campaign_id, inviter_id),
+  KEY idx_relations_parent (appid, campaign_id, parent_inviter_id),
   CONSTRAINT fk_relations_campaign FOREIGN KEY (campaign_id) REFERENCES acquisition_campaigns(id) ON DELETE CASCADE,
   CONSTRAINT fk_relations_member FOREIGN KEY (member_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_relations_inviter FOREIGN KEY (inviter_id) REFERENCES users(id) ON DELETE SET NULL,
@@ -188,6 +193,7 @@ CREATE TABLE IF NOT EXISTS acquisition_relations (
 
 CREATE TABLE IF NOT EXISTS screen_heartbeats (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   user_id BIGINT UNSIGNED NOT NULL,
   campaign_id BIGINT UNSIGNED NULL,
   product_id BIGINT UNSIGNED NULL,
@@ -197,10 +203,10 @@ CREATE TABLE IF NOT EXISTS screen_heartbeats (
   last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_screen_heartbeat_session (session_key),
-  KEY idx_screen_heartbeat_seen (last_seen_at),
-  KEY idx_screen_heartbeat_campaign_seen (campaign_id, last_seen_at),
-  KEY idx_screen_heartbeat_product_seen (product_id, last_seen_at),
+  UNIQUE KEY uk_screen_heartbeat_session (appid, session_key),
+  KEY idx_screen_heartbeat_seen (appid, last_seen_at),
+  KEY idx_screen_heartbeat_campaign_seen (appid, campaign_id, last_seen_at),
+  KEY idx_screen_heartbeat_product_seen (appid, product_id, last_seen_at),
   CONSTRAINT fk_screen_heartbeat_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_screen_heartbeat_campaign FOREIGN KEY (campaign_id) REFERENCES acquisition_campaigns(id) ON DELETE CASCADE,
   CONSTRAINT fk_screen_heartbeat_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
@@ -219,6 +225,7 @@ CREATE TABLE IF NOT EXISTS acquisition_materials (
 
 CREATE TABLE IF NOT EXISTS orders (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   user_id BIGINT UNSIGNED NOT NULL,
   product_id BIGINT UNSIGNED NOT NULL,
   quantity INT UNSIGNED NOT NULL,
@@ -237,6 +244,8 @@ CREATE TABLE IF NOT EXISTS orders (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_orders_out_trade_no (out_trade_no),
   KEY idx_orders_transaction (transaction_id),
+  KEY idx_orders_app_user_created (appid, user_id, created_at),
+  KEY idx_orders_app_status_created (appid, status, created_at),
   KEY idx_orders_user_created (user_id, created_at),
   KEY idx_orders_status_created (status, created_at),
   KEY idx_orders_product (product_id),
@@ -248,6 +257,7 @@ CREATE TABLE IF NOT EXISTS orders (
 
 CREATE TABLE IF NOT EXISTS acquisition_orders (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   campaign_id BIGINT UNSIGNED NOT NULL,
   order_id BIGINT UNSIGNED NOT NULL,
   inviter_id BIGINT UNSIGNED NULL,
@@ -258,8 +268,8 @@ CREATE TABLE IF NOT EXISTS acquisition_orders (
   scene VARCHAR(64) NOT NULL DEFAULT '',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_acquisition_order (order_id),
-  KEY idx_acquisition_orders_campaign (campaign_id, created_at),
-  KEY idx_acquisition_orders_inviter (campaign_id, inviter_id),
+  KEY idx_acquisition_orders_campaign (appid, campaign_id, created_at),
+  KEY idx_acquisition_orders_inviter (appid, campaign_id, inviter_id),
   CONSTRAINT fk_acq_orders_campaign FOREIGN KEY (campaign_id) REFERENCES acquisition_campaigns(id) ON DELETE CASCADE,
   CONSTRAINT fk_acq_orders_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
   CONSTRAINT fk_acq_orders_inviter FOREIGN KEY (inviter_id) REFERENCES users(id) ON DELETE SET NULL,
@@ -270,6 +280,7 @@ CREATE TABLE IF NOT EXISTS acquisition_orders (
 
 CREATE TABLE IF NOT EXISTS acquisition_lottery_records (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   campaign_id BIGINT UNSIGNED NOT NULL,
   order_id BIGINT UNSIGNED NOT NULL,
   user_id BIGINT UNSIGNED NOT NULL,
@@ -280,8 +291,8 @@ CREATE TABLE IF NOT EXISTS acquisition_lottery_records (
   amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
   status ENUM('pending','issued','failed') NOT NULL DEFAULT 'pending',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  KEY idx_lottery_campaign_created (campaign_id, created_at),
-  KEY idx_lottery_user (user_id, created_at),
+  KEY idx_lottery_campaign_created (appid, campaign_id, created_at),
+  KEY idx_lottery_user (appid, user_id, created_at),
   CONSTRAINT fk_lottery_campaign FOREIGN KEY (campaign_id) REFERENCES acquisition_campaigns(id) ON DELETE CASCADE,
   CONSTRAINT fk_lottery_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
   CONSTRAINT fk_lottery_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -289,6 +300,7 @@ CREATE TABLE IF NOT EXISTS acquisition_lottery_records (
 
 CREATE TABLE IF NOT EXISTS commissions (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   order_id BIGINT UNSIGNED NOT NULL,
   beneficiary_id BIGINT UNSIGNED NOT NULL,
   buyer_id BIGINT UNSIGNED NOT NULL,
@@ -299,8 +311,8 @@ CREATE TABLE IF NOT EXISTS commissions (
   available_at TIMESTAMP NULL DEFAULT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_commissions_order_beneficiary_level (order_id, beneficiary_id, level),
-  KEY idx_commissions_beneficiary_status (beneficiary_id, status),
-  KEY idx_commissions_buyer (buyer_id),
+  KEY idx_commissions_beneficiary_status (appid, beneficiary_id, status),
+  KEY idx_commissions_buyer (appid, buyer_id),
   CONSTRAINT fk_commissions_order FOREIGN KEY (order_id) REFERENCES orders(id),
   CONSTRAINT fk_commissions_beneficiary FOREIGN KEY (beneficiary_id) REFERENCES users(id),
   CONSTRAINT fk_commissions_buyer FOREIGN KEY (buyer_id) REFERENCES users(id)
@@ -308,6 +320,7 @@ CREATE TABLE IF NOT EXISTS commissions (
 
 CREATE TABLE IF NOT EXISTS withdrawals (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   user_id BIGINT UNSIGNED NOT NULL,
   amount DECIMAL(10, 2) NOT NULL,
   status ENUM('pending','approved','rejected','paidout') NOT NULL DEFAULT 'pending',
@@ -316,8 +329,8 @@ CREATE TABLE IF NOT EXISTS withdrawals (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   reviewed_at TIMESTAMP NULL DEFAULT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  KEY idx_withdrawals_user_status (user_id, status),
-  KEY idx_withdrawals_status_created (status, created_at),
+  KEY idx_withdrawals_user_status (appid, user_id, status),
+  KEY idx_withdrawals_status_created (appid, status, created_at),
   CONSTRAINT fk_withdrawals_user FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

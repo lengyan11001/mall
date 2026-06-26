@@ -3,17 +3,19 @@ const fs = require("fs");
 const https = require("https");
 const { URL } = require("url");
 const { appError } = require("./errors");
+const { defaultTenant } = require("./tenant-config");
 
-function payConfig() {
+function payConfig(tenant = defaultTenant()) {
+  const payment = tenant?.payment || {};
   return {
-    appid: process.env.WECHAT_APP_ID || "",
-    mchid: process.env.WECHAT_MCH_ID || "",
-    merchantSerialNo: process.env.WECHAT_PAY_SERIAL_NO || "",
-    merchantPrivateKeyPath: process.env.WECHAT_PAY_PRIVATE_KEY_PATH || "",
-    apiV3Key: process.env.WECHAT_PAY_API_V3_KEY || "",
-    notifyUrl: process.env.WECHAT_PAY_NOTIFY_URL || "",
-    publicKeyId: process.env.WECHAT_PAY_PUBLIC_KEY_ID || "",
-    publicKeyPath: process.env.WECHAT_PAY_PUBLIC_KEY_PATH || ""
+    appid: payment.appid || tenant?.appid || process.env.WECHAT_APP_ID || "",
+    mchid: payment.mchid || process.env.WECHAT_MCH_ID || "",
+    merchantSerialNo: payment.merchantSerialNo || process.env.WECHAT_PAY_SERIAL_NO || "",
+    merchantPrivateKeyPath: payment.merchantPrivateKeyPath || process.env.WECHAT_PAY_PRIVATE_KEY_PATH || "",
+    apiV3Key: payment.apiV3Key || process.env.WECHAT_PAY_API_V3_KEY || "",
+    notifyUrl: payment.notifyUrl || process.env.WECHAT_PAY_NOTIFY_URL || "",
+    publicKeyId: payment.publicKeyId || process.env.WECHAT_PAY_PUBLIC_KEY_ID || "",
+    publicKeyPath: payment.publicKeyPath || process.env.WECHAT_PAY_PUBLIC_KEY_PATH || ""
   };
 }
 
@@ -66,8 +68,8 @@ function authorization(method, pathname, query, body, config) {
   };
 }
 
-function requestWechat(method, apiPath, body = null) {
-  const config = assertConfig();
+function requestWechat(method, apiPath, body = null, tenant) {
+  const config = assertConfig(payConfig(tenant));
   const url = new URL(apiPath, "https://api.mch.weixin.qq.com");
   const auth = authorization(method, url.pathname, url.search, body, config);
   return new Promise((resolve, reject) => {
@@ -107,8 +109,8 @@ function yuanToFen(value) {
   return Math.round(Number(value || 0) * 100);
 }
 
-async function createJsapiPrepay({ outTradeNo, description, amount, openid, attach = "" }) {
-  const config = assertConfig();
+async function createJsapiPrepay({ outTradeNo, description, amount, openid, attach = "" }, tenant) {
+  const config = assertConfig(payConfig(tenant));
   return requestWechat("POST", "/v3/pay/transactions/jsapi", {
     appid: config.appid,
     mchid: config.mchid,
@@ -121,11 +123,11 @@ async function createJsapiPrepay({ outTradeNo, description, amount, openid, atta
     },
     payer: { openid },
     attach
-  });
+  }, tenant);
 }
 
-function jsapiPayParams(prepayId) {
-  const config = assertConfig();
+function jsapiPayParams(prepayId, tenant) {
+  const config = assertConfig(payConfig(tenant));
   const timeStamp = timestamp();
   const nonceStr = nonce();
   const packageValue = `prepay_id=${prepayId}`;
@@ -140,8 +142,8 @@ function jsapiPayParams(prepayId) {
   };
 }
 
-function verifyWechatpaySignature(headers, rawBody) {
-  const config = assertConfig();
+function verifyWechatpaySignature(headers, rawBody, tenant) {
+  const config = assertConfig(payConfig(tenant));
   const timestampHeader = String(headers["wechatpay-timestamp"] || "");
   const nonceHeader = String(headers["wechatpay-nonce"] || "");
   const signatureHeader = String(headers["wechatpay-signature"] || "");
@@ -155,8 +157,8 @@ function verifyWechatpaySignature(headers, rawBody) {
   );
 }
 
-function decryptResource(resource) {
-  const config = assertConfig();
+function decryptResource(resource, tenant) {
+  const config = assertConfig(payConfig(tenant));
   const decipher = crypto.createDecipheriv(
     "aes-256-gcm",
     Buffer.from(config.apiV3Key, "utf8"),
@@ -169,9 +171,9 @@ function decryptResource(resource) {
   return JSON.parse(plaintext.toString("utf8"));
 }
 
-async function queryOrder(outTradeNo) {
-  const config = assertConfig();
-  return requestWechat("GET", `/v3/pay/transactions/out-trade-no/${encodeURIComponent(outTradeNo)}?mchid=${encodeURIComponent(config.mchid)}`);
+async function queryOrder(outTradeNo, tenant) {
+  const config = assertConfig(payConfig(tenant));
+  return requestWechat("GET", `/v3/pay/transactions/out-trade-no/${encodeURIComponent(outTradeNo)}?mchid=${encodeURIComponent(config.mchid)}`, null, tenant);
 }
 
 module.exports = {

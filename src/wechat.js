@@ -1,23 +1,21 @@
 const { appError } = require("./errors");
+const { defaultTenant } = require("./tenant-config");
 
-const tokenCache = {
-  value: "",
-  expiresAt: 0
-};
+const tokenCache = new Map();
 
-function wechatConfig() {
-  const appid = process.env.WECHAT_APP_ID;
-  const secret = process.env.WECHAT_APP_SECRET;
+function wechatConfig(tenant = defaultTenant()) {
+  const appid = tenant?.appid || process.env.WECHAT_APP_ID;
+  const secret = tenant?.secret || process.env.WECHAT_APP_SECRET;
   if (!appid || !secret) {
-    throw appError(500, "微信小程序配置缺失");
+    throw appError(500, "WeChat mini program config is missing");
   }
   return { appid, secret };
 }
 
-async function codeToSession(code) {
-  const { appid, secret } = wechatConfig();
+async function codeToSession(code, tenant) {
+  const { appid, secret } = wechatConfig(tenant);
   if (!code) {
-    throw appError(422, "缺少微信登录 code");
+    throw appError(422, "Missing WeChat login code");
   }
 
   const url = new URL("https://api.weixin.qq.com/sns/jscode2session");
@@ -29,23 +27,24 @@ async function codeToSession(code) {
   const response = await fetch(url);
   const data = await response.json();
   if (!response.ok || data.errcode) {
-    throw appError(502, `微信登录失败：${data.errmsg || response.statusText}`, {
+    throw appError(502, `WeChat login failed: ${data.errmsg || response.statusText}`, {
       errcode: data.errcode
     });
   }
   if (!data.openid) {
-    throw appError(502, "微信登录未返回 openid");
+    throw appError(502, "WeChat login did not return openid");
   }
   return data;
 }
 
-async function getAccessToken() {
+async function getAccessToken(tenant) {
   const now = Date.now();
-  if (tokenCache.value && tokenCache.expiresAt > now + 60 * 1000) {
-    return tokenCache.value;
+  const { appid, secret } = wechatConfig(tenant);
+  const cached = tokenCache.get(appid);
+  if (cached?.value && cached.expiresAt > now + 60 * 1000) {
+    return cached.value;
   }
 
-  const { appid, secret } = wechatConfig();
   const url = new URL("https://api.weixin.qq.com/cgi-bin/token");
   url.searchParams.set("grant_type", "client_credential");
   url.searchParams.set("appid", appid);
@@ -54,25 +53,27 @@ async function getAccessToken() {
   const response = await fetch(url);
   const data = await response.json();
   if (!response.ok || data.errcode || !data.access_token) {
-    throw appError(502, `微信 access_token 获取失败：${data.errmsg || response.statusText}`, {
+    throw appError(502, `WeChat access_token failed: ${data.errmsg || response.statusText}`, {
       errcode: data.errcode
     });
   }
 
-  tokenCache.value = data.access_token;
-  tokenCache.expiresAt = now + Math.max(300, Number(data.expires_in || 7200) - 300) * 1000;
-  return tokenCache.value;
+  tokenCache.set(appid, {
+    value: data.access_token,
+    expiresAt: now + Math.max(300, Number(data.expires_in || 7200) - 300) * 1000
+  });
+  return data.access_token;
 }
 
-async function getUnlimitedQRCode({ scene, page = "pages/home/index", checkPath = false }) {
+async function getUnlimitedQRCode({ scene, page = "pages/home/index", checkPath = false }, tenant) {
   if (!scene) {
-    throw appError(422, "缺少小程序码 scene");
+    throw appError(422, "Missing mini program QR scene");
   }
   if (String(scene).length > 32) {
-    throw appError(422, "小程序码 scene 不能超过 32 个字符");
+    throw appError(422, "Mini program QR scene cannot exceed 32 chars");
   }
 
-  const accessToken = await getAccessToken();
+  const accessToken = await getAccessToken(tenant);
   const url = new URL("https://api.weixin.qq.com/wxa/getwxacodeunlimit");
   url.searchParams.set("access_token", accessToken);
 
@@ -94,12 +95,12 @@ async function getUnlimitedQRCode({ scene, page = "pages/home/index", checkPath 
     } catch {
       data = {};
     }
-    throw appError(502, `微信小程序码生成失败：${data.errmsg || response.statusText}`, {
+    throw appError(502, `Mini program QR generation failed: ${data.errmsg || response.statusText}`, {
       errcode: data.errcode
     });
   }
   if (!response.ok || !buffer.length) {
-    throw appError(502, `微信小程序码生成失败：${response.statusText}`);
+    throw appError(502, `Mini program QR generation failed: ${response.statusText}`);
   }
   return buffer;
 }
