@@ -131,6 +131,23 @@ function newSessionToken() {
   return crypto.randomBytes(32).toString("hex");
 }
 
+function hashAdminPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const hash = crypto.pbkdf2Sync(String(password || ""), salt, 120000, 32, "sha256").toString("hex");
+  return `pbkdf2_sha256$120000$${salt}$${hash}`;
+}
+
+function verifyAdminPassword(password, storedHash = "") {
+  const legacy = String(storedHash || "");
+  if (legacy.startsWith("pbkdf2_sha256$")) {
+    const [, iterations, salt, hash] = legacy.split("$");
+    const computed = crypto.pbkdf2Sync(String(password || ""), salt, Number(iterations || 120000), 32, "sha256").toString("hex");
+    const left = Buffer.from(computed);
+    const right = Buffer.from(hash || "");
+    return left.length === right.length && crypto.timingSafeEqual(left, right);
+  }
+  return legacy && legacy === crypto.createHash("sha256").update(String(password || "")).digest("hex");
+}
+
 function boolFlag(value) {
   if (typeof value === "string") return ["1", "true", "on", "yes"].includes(value.toLowerCase()) ? 1 : 0;
   return value ? 1 : 0;
@@ -297,10 +314,49 @@ function createStore(pool = createPool()) {
     await pool.query("SELECT 1");
   }
 
-  async function settings(conn = pool) {
-    const row = await one(conn, "SELECT * FROM app_settings WHERE id = 1");
-    if (!row) throw appError(500, "系统设置缺失");
+  async function settings(conn = pool, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
+    let row = await one(conn, "SELECT * FROM app_settings WHERE appid = :appid", { appid: scopedAppId });
+    if (!row && scopedAppId) {
+      const fallback = await one(conn, "SELECT * FROM app_settings ORDER BY id LIMIT 1");
+      const nextId = await one(conn, "SELECT COALESCE(MAX(id), 0) + 1 id FROM app_settings");
+      await conn.query(
+        `INSERT INTO app_settings (
+          id, appid, commission_level_1, commission_level_2, min_withdrawal, compliance_name, auto_pay_enabled
+        ) VALUES (
+          :id, :appid, :level1, :level2, :minWithdrawal, :complianceName, :autoPayEnabled
+        )`,
+        {
+          id: Number(nextId?.id || 1),
+          appid: scopedAppId,
+          level1: Number(fallback?.commission_level_1 ?? 0.12),
+          level2: Number(fallback?.commission_level_2 ?? 0.05),
+          minWithdrawal: Number(fallback?.min_withdrawal ?? 10),
+          complianceName: String(fallback?.compliance_name || "Invite").slice(0, 20),
+          autoPayEnabled: Boolean(fallback?.auto_pay_enabled)
+        }
+      );
+      row = await one(conn, "SELECT * FROM app_settings WHERE appid = :appid", { appid: scopedAppId });
+    }
+    if (!row) throw appError(500, "System settings missing");
     return normalizeSettings(row);
+  }
+
+  async function verifyAdminLogin(body = {}) {
+    const username = cleanText(body.username, "", 64);
+    const password = String(body.password || "");
+    if (!username || !password) throw appError(401, "Account or password is incorrect");
+    const row = await one(pool, "SELECT * FROM admin_users WHERE username = :username AND status = 'active'", { username });
+    if (row) {
+      if (!verifyAdminPassword(password, row.password_hash)) throw appError(401, "Account or password is incorrect");
+      return { username: row.username, appid: normalizeAppId(row.appid) };
+    }
+    const envUser = process.env.ADMIN_USERNAME || "";
+    const envPassword = process.env.ADMIN_PASSWORD || "";
+    if (envUser && envPassword && username === envUser && password === envPassword) {
+      return { username: envUser, appid: defaultAppId() };
+    }
+    throw appError(401, "Account or password is incorrect");
   }
 
   async function getUser(userId, conn = pool, appid = "") {
@@ -567,62 +623,69 @@ function createStore(pool = createPool()) {
     });
   }
 
-  async function categories(conn = pool) {
-    const rows = await many(conn, "SELECT DISTINCT category FROM products ORDER BY category");
+  async function categories(conn = pool, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
+    const rows = await many(conn, "SELECT DISTINCT category FROM products WHERE appid = :appid ORDER BY category", { appid: scopedAppId });
     return ["全部", ...rows.map(row => row.category).filter(Boolean).filter(category => category !== "全部")];
   }
 
-  async function listPublicProducts({ category = "全部", keyword = "" }) {
+  async function listPublicProducts({ category = "全部", keyword = "", appid = "" }) {
+    const scopedAppId = normalizeAppId(appid);
     const params = {
+      appid: scopedAppId,
       category,
       keyword: `%${String(keyword).trim()}%`
     };
-    const filters = ["status = 'on'"];
+    const filters = ["appid = :appid", "status = 'on'"];
     if (category && category !== "全部") filters.push("category = :category");
     if (String(keyword).trim()) filters.push("(title LIKE :keyword OR description LIKE :keyword)");
     const products = await many(pool, `SELECT * FROM products WHERE ${filters.join(" AND ")} ORDER BY sales DESC, id DESC`, params);
     return {
-      categories: await categories(),
+      categories: await categories(pool, scopedAppId),
       products: products.map(publicProduct)
     };
   }
 
-  async function getPublicProduct(productId, conn = pool) {
-    const product = await one(conn, "SELECT * FROM products WHERE id = :id AND status = 'on'", { id: assertId(productId, "商品 ID") });
+  async function getPublicProduct(productId, conn = pool, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
+    const product = await one(conn, "SELECT * FROM products WHERE id = :id AND appid = :appid AND status = 'on'", { id: assertId(productId, "商品 ID"), appid: scopedAppId });
     if (!product) throw appError(404, "商品不存在或已下架");
     return publicProduct(product);
   }
 
-  async function listAdminProducts() {
-    const rows = await many(pool, "SELECT * FROM products ORDER BY id DESC");
+  async function listAdminProducts(appid = "") {
+    const scopedAppId = normalizeAppId(appid);
+    const rows = await many(pool, "SELECT * FROM products WHERE appid = :appid ORDER BY id DESC", { appid: scopedAppId });
     return rows.map(publicProduct);
   }
 
-  async function createProduct(body) {
+  async function createProduct(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     const payload = productPayload(body);
     if (!payload.title || payload.price <= 0) throw appError(422, "商品标题和销售价必填");
     const [result] = await pool.query(
       `INSERT INTO products (
-         title, subtitle, product_no, barcode, category, brand, unit, market_price, price, cost_price,
+         appid, title, subtitle, product_no, barcode, category, brand, unit, market_price, price, cost_price,
          stock, sales, status, commission_rate, image_url, images_json, detail_html, description,
          weight, min_buy_qty, per_order_limit, per_user_limit, is_virtual, no_refund_after_pay,
          freight_template, delivery_methods, vip_enabled
        )
        VALUES (
-         :title, :subtitle, :productNo, :barcode, :category, :brand, :unit, :marketPrice, :price, :costPrice,
+         :appid, :title, :subtitle, :productNo, :barcode, :category, :brand, :unit, :marketPrice, :price, :costPrice,
          :stock, 0, :status, :commissionRate, :imageUrl, :imagesJson, :detailHtml, :description,
          :weight, :minBuyQty, :perOrderLimit, :perUserLimit, :isVirtual, :noRefundAfterPay,
          :freightTemplate, :deliveryMethods, :vipEnabled
        )`,
-      payload
+      { ...payload, appid: scopedAppId }
     );
     const product = await one(pool, "SELECT * FROM products WHERE id = :id", { id: result.insertId });
     return publicProduct(product);
   }
 
-  async function updateProduct(productId, body) {
+  async function updateProduct(productId, body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     const id = assertId(productId, "商品 ID");
-    const existing = await one(pool, "SELECT * FROM products WHERE id = :id", { id });
+    const existing = await one(pool, "SELECT * FROM products WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
     if (!existing) throw appError(404, "商品不存在");
     const next = productPayload(body, existing);
     if (!next.title || next.price <= 0) throw appError(422, "商品标题和销售价必填");
@@ -654,10 +717,10 @@ function createStore(pool = createPool()) {
            freight_template = :freightTemplate,
            delivery_methods = :deliveryMethods,
            vip_enabled = :vipEnabled
-       WHERE id = :id`,
-      { ...next, id }
+       WHERE id = :id AND appid = :appid`,
+      { ...next, id, appid: scopedAppId }
     );
-    const product = await one(pool, "SELECT * FROM products WHERE id = :id", { id });
+    const product = await one(pool, "SELECT * FROM products WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
     return publicProduct(product);
   }
 
@@ -694,9 +757,10 @@ function createStore(pool = createPool()) {
     `;
   }
 
-  async function listAcquisitionCampaigns({ status = "", keyword = "" } = {}) {
-    const filters = [];
-    const params = { keyword: `%${cleanText(keyword, "", 80)}%` };
+  async function listAcquisitionCampaigns({ status = "", keyword = "", appid = "" } = {}) {
+    const scopedAppId = normalizeAppId(appid);
+    const filters = ["ac.appid = :appid"];
+    const params = { appid: scopedAppId, keyword: `%${cleanText(keyword, "", 80)}%` };
     if (status) {
       filters.push("ac.status = :status");
       params.status = enumValue(status, ["draft", "published", "ended", "expired"], "");
@@ -711,9 +775,11 @@ function createStore(pool = createPool()) {
     return rows.map(campaignRow);
   }
 
-  async function getAcquisitionCampaign(campaignId, conn = pool) {
+  async function getAcquisitionCampaign(campaignId, conn = pool, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const id = assertId(campaignId, "拓客宝活动 ID");
-    const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id`, { id });
+    const appFilter = scopedAppId ? " AND ac.appid = :appid" : "";
+    const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id${appFilter}`, { id, appid: scopedAppId });
     if (!row) throw appError(404, "拓客宝活动不存在");
     const campaign = campaignRow(row);
     campaign.qrcodes = (await many(conn, "SELECT * FROM acquisition_qrcodes WHERE campaign_id = :id ORDER BY type, id", { id })).map(qrcodeRow);
@@ -726,9 +792,10 @@ function createStore(pool = createPool()) {
     return campaign;
   }
 
-  async function listPublicAcquisitionCampaigns({ keyword = "" } = {}) {
-    const params = { keyword: `%${cleanText(keyword, "", 80)}%` };
-    const filters = ["ac.status = 'published'", "ac.start_at <= UTC_TIMESTAMP()", "ac.end_at >= UTC_TIMESTAMP()"];
+  async function listPublicAcquisitionCampaigns({ keyword = "", appid = "" } = {}) {
+    const scopedAppId = normalizeAppId(appid);
+    const params = { appid: scopedAppId, keyword: `%${cleanText(keyword, "", 80)}%` };
+    const filters = ["ac.appid = :appid", "ac.status = 'published'", "ac.start_at <= UTC_TIMESTAMP()", "ac.end_at >= UTC_TIMESTAMP()"];
     if (cleanText(keyword)) filters.push("(ac.name LIKE :keyword OR p.title LIKE :keyword OR p.product_no LIKE :keyword)");
     const rows = await many(pool, `
       ${campaignSelect()}
@@ -740,21 +807,23 @@ function createStore(pool = createPool()) {
   }
 
   async function getActiveAcquisitionCampaign(userId = null, scene = "", appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const rows = await many(pool, `
       ${campaignSelect()}
-      WHERE ac.status = 'published'
+      WHERE ac.appid = :appid
+        AND ac.status = 'published'
         AND ac.start_at <= UTC_TIMESTAMP()
         AND ac.end_at >= UTC_TIMESTAMP()
       ORDER BY ac.updated_at DESC, ac.id DESC
       LIMIT 1
-    `);
+    `, { appid: scopedAppId });
     if (!rows.length) return null;
-    return getPublicAcquisitionCampaign(rows[0].id, userId, scene, appid);
+    return getPublicAcquisitionCampaign(rows[0].id, userId, scene, scopedAppId);
   }
 
   async function getPublicAcquisitionCampaign(campaignId, userId = null, scene = "", appid = "") {
     const scopedAppId = normalizeAppId(appid);
-    const campaign = await getAcquisitionCampaign(campaignId);
+    const campaign = await getAcquisitionCampaign(campaignId, pool, scopedAppId);
     if (campaign.status !== "published") throw appError(404, "活动未发布");
     const now = Date.now();
     if (new Date(campaign.start_at).getTime() > now || new Date(campaign.end_at).getTime() < now) {
@@ -796,18 +865,19 @@ function createStore(pool = createPool()) {
     return inviterId && inviterId !== memberId ? inviterId : 0;
   }
 
-  async function createAcquisitionCampaign(body) {
+  async function createAcquisitionCampaign(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     const payload = campaignPayload(body);
     if (!payload.name || !payload.productId || payload.leadPrice <= 0) throw appError(422, "活动主题、引流商品和引流价必填");
-    const product = await one(pool, "SELECT id FROM products WHERE id = :id", { id: payload.productId });
+    const product = await one(pool, "SELECT id FROM products WHERE id = :id AND appid = :appid", { id: payload.productId, appid: scopedAppId });
     if (!product) throw appError(404, "引流商品不存在");
     return tx(pool, async conn => {
       if (payload.status === "published") {
-        await conn.query("UPDATE acquisition_campaigns SET status = 'ended' WHERE status = 'published'");
+        await conn.query("UPDATE acquisition_campaigns SET status = 'ended' WHERE appid = :appid AND status = 'published'", { appid: scopedAppId });
       }
       const [result] = await conn.query(
         `INSERT INTO acquisition_campaigns (
-          name, description, product_id, start_at, end_at, hide_time, stock, lead_price, settle_price,
+          appid, name, description, product_id, start_at, end_at, hide_time, stock, lead_price, settle_price,
           per_user_limit, per_order_limit, delivery_methods, free_shipping, show_store_address,
           verify_at_order_store, member_tag, post_pay_address, relation_mode, default_inviter_id,
           reward_issue_way, reward_permission, reward_rule, reward_level1, reward_level2, direct_pay_way,
@@ -817,7 +887,7 @@ function createStore(pool = createPool()) {
           customer_service_qrcode, background_music, poster_config, form_schema, virtual_sold_count,
           virtual_share_count, virtual_browse_count, virtual_invite_count, virtual_rankings, status
         ) VALUES (
-          :name, :description, :productId, :startAt, :endAt, :hideTime, :stock, :leadPrice, :settlePrice,
+          :appid, :name, :description, :productId, :startAt, :endAt, :hideTime, :stock, :leadPrice, :settlePrice,
           :perUserLimit, :perOrderLimit, :deliveryMethods, :freeShipping, :showStoreAddress,
           :verifyAtOrderStore, :memberTag, :postPayAddress, :relationMode, :defaultInviterId,
           :rewardIssueWay, :rewardPermission, :rewardRule, :rewardLevel1, :rewardLevel2, :directPayWay,
@@ -827,21 +897,22 @@ function createStore(pool = createPool()) {
           :customerServiceQrcode, :backgroundMusic, :posterConfig, :formSchema, :virtualSoldCount,
           :virtualShareCount, :virtualBrowseCount, :virtualInviteCount, :virtualRankings, :status
         )`,
-        payload
+        { ...payload, appid: scopedAppId }
       );
-      return getAcquisitionCampaign(result.insertId, conn);
+      return getAcquisitionCampaign(result.insertId, conn, scopedAppId);
     });
   }
 
-  async function updateAcquisitionCampaign(campaignId, body) {
+  async function updateAcquisitionCampaign(campaignId, body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     const id = assertId(campaignId, "拓客宝活动 ID");
-    const existing = await one(pool, "SELECT * FROM acquisition_campaigns WHERE id = :id", { id });
+    const existing = await one(pool, "SELECT * FROM acquisition_campaigns WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
     if (!existing) throw appError(404, "拓客宝活动不存在");
     const payload = campaignPayload(body, existing);
     if (!payload.name || !payload.productId || payload.leadPrice <= 0) throw appError(422, "活动主题、引流商品和引流价必填");
     return tx(pool, async conn => {
       if (payload.status === "published") {
-        await conn.query("UPDATE acquisition_campaigns SET status = 'ended' WHERE status = 'published' AND id <> :id", { id });
+        await conn.query("UPDATE acquisition_campaigns SET status = 'ended' WHERE appid = :appid AND status = 'published' AND id <> :id", { id, appid: scopedAppId });
       }
       await conn.query(
         `UPDATE acquisition_campaigns SET
@@ -894,29 +965,31 @@ function createStore(pool = createPool()) {
           virtual_invite_count = :virtualInviteCount,
           virtual_rankings = :virtualRankings,
           status = :status
-         WHERE id = :id`,
-        { ...payload, id }
+         WHERE id = :id AND appid = :appid`,
+        { ...payload, id, appid: scopedAppId }
       );
-      return getAcquisitionCampaign(id, conn);
+      return getAcquisitionCampaign(id, conn, scopedAppId);
     });
   }
 
-  async function patchAcquisitionCampaign(campaignId, body) {
+  async function patchAcquisitionCampaign(campaignId, body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     const id = assertId(campaignId, "拓客宝活动 ID");
     const action = String(body.action || "");
     const statusMap = { publish: "published", end: "ended", expire: "expired", draft: "draft" };
     if (!statusMap[action]) throw appError(422, "未知活动操作");
     return tx(pool, async conn => {
       if (action === "publish") {
-        await conn.query("UPDATE acquisition_campaigns SET status = 'ended' WHERE status = 'published' AND id <> :id", { id });
+        await conn.query("UPDATE acquisition_campaigns SET status = 'ended' WHERE appid = :appid AND status = 'published' AND id <> :id", { id, appid: scopedAppId });
       }
-      await conn.query("UPDATE acquisition_campaigns SET status = :status WHERE id = :id", { id, status: statusMap[action] });
-      return getAcquisitionCampaign(id, conn);
+      await conn.query("UPDATE acquisition_campaigns SET status = :status WHERE id = :id AND appid = :appid", { id, appid: scopedAppId, status: statusMap[action] });
+      return getAcquisitionCampaign(id, conn, scopedAppId);
     });
   }
 
-  async function saveAcquisitionQrcode(campaignId, body) {
-    const campaign = await getAcquisitionCampaign(campaignId);
+  async function saveAcquisitionQrcode(campaignId, body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
+    const campaign = await getAcquisitionCampaign(campaignId, pool, scopedAppId);
     const type = enumValue(body.type, ["personal", "group"], "personal");
     const payload = {
       campaignId: campaign.id,
@@ -952,20 +1025,23 @@ function createStore(pool = createPool()) {
         payload
       );
     }
-    return getAcquisitionCampaign(campaign.id);
+    return getAcquisitionCampaign(campaign.id, pool, scopedAppId);
   }
 
-  async function deleteAcquisitionQrcode(campaignId, qrcodeId) {
-    const campaign = await getAcquisitionCampaign(campaignId);
+  async function deleteAcquisitionQrcode(campaignId, qrcodeId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
+    const campaign = await getAcquisitionCampaign(campaignId, pool, scopedAppId);
     await pool.query("DELETE FROM acquisition_qrcodes WHERE id = :qrcodeId AND campaign_id = :campaignId", {
       qrcodeId: assertId(qrcodeId, "引流码 ID"),
       campaignId: campaign.id
     });
-    return getAcquisitionCampaign(campaign.id);
+    return getAcquisitionCampaign(campaign.id, pool, scopedAppId);
   }
 
-  async function listAcquisitionRelations(campaignId) {
+  async function listAcquisitionRelations(campaignId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const id = assertId(campaignId, "拓客宝活动 ID");
+    await getAcquisitionCampaign(id, pool, scopedAppId);
     const rows = await many(pool, `
       SELECT
         r.*,
@@ -980,10 +1056,10 @@ function createStore(pool = createPool()) {
       LEFT JOIN users p ON p.id = r.parent_inviter_id
       LEFT JOIN users tl ON tl.id = r.team_leader_id
       LEFT JOIN users itl ON itl.id = r.indirect_team_leader_id
-      WHERE r.campaign_id = :id
+      WHERE r.campaign_id = :id AND r.appid = :appid
       ORDER BY r.entered_at DESC
       LIMIT 200
-    `, { id });
+    `, { id, appid: scopedAppId });
     return rows.map(row => ({
       id: row.id,
       campaign_id: row.campaign_id,
@@ -999,14 +1075,18 @@ function createStore(pool = createPool()) {
     }));
   }
 
-  async function listAcquisitionOrders(campaignId) {
+  async function listAcquisitionOrders(campaignId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const id = assertId(campaignId, "拓客宝活动 ID");
-    const rows = await loadOrderRows("JOIN acquisition_orders ao ON ao.order_id = o.id WHERE ao.campaign_id = :campaignId", { campaignId: id });
+    await getAcquisitionCampaign(id, pool, scopedAppId);
+    const rows = await loadOrderRows("JOIN acquisition_orders ao ON ao.order_id = o.id WHERE ao.campaign_id = :campaignId AND ao.appid = :appid AND o.appid = :appid", { campaignId: id, appid: scopedAppId });
     return rows.map(orderRow);
   }
 
-  async function listAcquisitionRewards(campaignId) {
+  async function listAcquisitionRewards(campaignId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const id = assertId(campaignId, "拓客宝活动 ID");
+    await getAcquisitionCampaign(id, pool, scopedAppId);
     const rows = await many(pool, `
       SELECT
         c.*,
@@ -1026,56 +1106,57 @@ function createStore(pool = createPool()) {
         b.nickname beneficiary_nickname, b.phone beneficiary_phone, b.avatar beneficiary_avatar
       FROM acquisition_orders ao
       JOIN commissions c ON c.order_id = ao.order_id
-      LEFT JOIN orders o ON o.id = c.order_id
-      LEFT JOIN products p ON p.id = o.product_id
-      LEFT JOIN users buyer ON buyer.id = c.buyer_id
-      LEFT JOIN users b ON b.id = c.beneficiary_id
-      WHERE ao.campaign_id = :id
+      LEFT JOIN orders o ON o.id = c.order_id AND o.appid = :appid
+      LEFT JOIN products p ON p.id = o.product_id AND p.appid = :appid
+      LEFT JOIN users buyer ON buyer.id = c.buyer_id AND buyer.appid = :appid
+      LEFT JOIN users b ON b.id = c.beneficiary_id AND b.appid = :appid
+      WHERE ao.campaign_id = :id AND ao.appid = :appid AND c.appid = :appid
       ORDER BY c.created_at DESC, c.id DESC
       LIMIT 300
-    `, { id });
+    `, { id, appid: scopedAppId });
     return rows.map(commissionRow);
   }
 
-  async function acquisitionDashboard(campaignId) {
+  async function acquisitionDashboard(campaignId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const id = assertId(campaignId, "拓客宝活动 ID");
-    const campaign = await getAcquisitionCampaign(id);
+    const campaign = await getAcquisitionCampaign(id, pool, scopedAppId);
     const totals = await one(pool, `
       SELECT
-        (SELECT COUNT(DISTINCT member_id) FROM acquisition_relations WHERE campaign_id = :id) visitors,
+        (SELECT COUNT(DISTINCT member_id) FROM acquisition_relations WHERE campaign_id = :id AND appid = :appid) visitors,
         (
           SELECT COUNT(DISTINCT ao.order_id)
           FROM acquisition_orders ao
           JOIN orders o ON o.id = ao.order_id
-          WHERE ao.campaign_id = :id AND o.status IN ('paid','shipped','received')
+          WHERE ao.campaign_id = :id AND ao.appid = :appid AND o.appid = :appid AND o.status IN ('paid','shipped','received')
         ) orders,
         (
           SELECT COALESCE(SUM(o.amount), 0)
           FROM acquisition_orders ao
           JOIN orders o ON o.id = ao.order_id
-          WHERE ao.campaign_id = :id AND o.status IN ('paid','shipped','received')
+          WHERE ao.campaign_id = :id AND ao.appid = :appid AND o.appid = :appid AND o.status IN ('paid','shipped','received')
         ) order_amount,
         (
           SELECT COALESCE(SUM(o.amount), 0)
           FROM acquisition_orders ao
           JOIN orders o ON o.id = ao.order_id
-          WHERE ao.campaign_id = :id AND o.status IN ('paid','shipped','received')
+          WHERE ao.campaign_id = :id AND ao.appid = :appid AND o.appid = :appid AND o.status IN ('paid','shipped','received')
         ) paid_amount,
         (
           SELECT COALESCE(SUM(c.amount), 0)
           FROM acquisition_orders ao
           JOIN commissions c ON c.order_id = ao.order_id
-          WHERE ao.campaign_id = :id AND c.status <> 'canceled'
+          WHERE ao.campaign_id = :id AND ao.appid = :appid AND c.appid = :appid AND c.status <> 'canceled'
         ) reward_amount
-    `, { id }) || {};
+    `, { id, appid: scopedAppId }) || {};
     const relationRows = await many(pool, `
       SELECT inviter_id, COUNT(*) fans
       FROM acquisition_relations
-      WHERE campaign_id = :id AND inviter_id IS NOT NULL
+      WHERE campaign_id = :id AND appid = :appid AND inviter_id IS NOT NULL
       GROUP BY inviter_id
       ORDER BY fans DESC
       LIMIT 20
-    `, { id });
+    `, { id, appid: scopedAppId });
     return {
       campaign,
       conversion_rate: Number(totals.visitors || 0) ? Number(totals.orders || 0) / Number(totals.visitors || 1) : 0,
@@ -1090,13 +1171,16 @@ function createStore(pool = createPool()) {
     };
   }
 
-  async function listAcquisitionMaterials() {
-    const rows = await many(pool, "SELECT * FROM acquisition_materials ORDER BY type, sort_order, id DESC");
+  async function listAcquisitionMaterials(appid = "") {
+    const scopedAppId = normalizeAppId(appid);
+    const rows = await many(pool, "SELECT * FROM acquisition_materials WHERE appid = :appid ORDER BY type, sort_order, id DESC", { appid: scopedAppId });
     return rows.map(materialRow);
   }
 
-  async function saveAcquisitionMaterial(body) {
+  async function saveAcquisitionMaterial(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     const payload = {
+      appid: scopedAppId,
       type: enumValue(body.type, ["qrcode_bg", "share_poster", "share_cover"], "qrcode_bg"),
       imageUrl: cleanText(body.image_url, "", 600),
       styleConfig: jsonField(body.style_config, {}),
@@ -1108,20 +1192,21 @@ function createStore(pool = createPool()) {
       await pool.query(
         `UPDATE acquisition_materials
          SET type = :type, image_url = :imageUrl, style_config = :styleConfig, sort_order = :sortOrder
-         WHERE id = :id`,
+         WHERE id = :id AND appid = :appid`,
         { ...payload, id }
       );
     } else {
       await pool.query(
-        `INSERT INTO acquisition_materials (type, image_url, style_config, sort_order)
-         VALUES (:type, :imageUrl, :styleConfig, :sortOrder)`,
+        `INSERT INTO acquisition_materials (appid, type, image_url, style_config, sort_order)
+         VALUES (:appid, :type, :imageUrl, :styleConfig, :sortOrder)`,
         payload
       );
     }
-    return listAcquisitionMaterials();
+    return listAcquisitionMaterials(scopedAppId);
   }
 
   async function loadOrderRows(whereSql, params = {}, conn = pool) {
+    const queryParams = { appid: null, ...params };
     return many(conn, `
       SELECT
         o.*,
@@ -1139,11 +1224,11 @@ function createStore(pool = createPool()) {
         u.parent_id user_parent_id, u.first_parent_id user_first_parent_id,
         u.distributor_status user_distributor_status, u.created_at user_created_at
       FROM orders o
-      LEFT JOIN products p ON p.id = o.product_id
-      LEFT JOIN users u ON u.id = o.user_id
+      LEFT JOIN products p ON p.id = o.product_id AND (:appid IS NULL OR p.appid = :appid)
+      LEFT JOIN users u ON u.id = o.user_id AND (:appid IS NULL OR u.appid = :appid)
       ${whereSql}
       ORDER BY o.created_at DESC, o.id DESC
-    `, params);
+    `, queryParams);
   }
 
   async function listOrders({ userId = null, appid = "" } = {}) {
@@ -1164,7 +1249,7 @@ function createStore(pool = createPool()) {
   async function createCommissionsForOrder(conn, order, buyer, product) {
     const scopedAppId = normalizeAppId(order.appid || buyer.appid);
     if (!buyer.parent_id) return [];
-    const appSettings = await settings(conn);
+    const appSettings = await settings(conn, scopedAppId);
     const created = [];
     const parent = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid AND distributor_status = 'approved'", { id: buyer.parent_id, appid: scopedAppId });
     if (parent) {
@@ -1427,7 +1512,7 @@ function createStore(pool = createPool()) {
   async function queueInstantAcquisitionPayouts(conn, order, campaign, commissions) {
     const scopedAppId = normalizeAppId(order.appid || campaign.appid);
     if (campaign.reward_issue_way !== "instant" || !commissions.length) return [];
-    const appSettings = await settings(conn);
+    const appSettings = await settings(conn, scopedAppId);
     const status = appSettings.auto_pay_enabled ? "paidout" : "approved";
     const reviewNote = appSettings.auto_pay_enabled
       ? "系统自动模拟企业付款到零钱"
@@ -1583,13 +1668,13 @@ function createStore(pool = createPool()) {
       const meta = await acquisitionOrderMeta(conn, order.id);
       await conn.query("UPDATE orders SET status = 'closed' WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
       await conn.query(
-        "UPDATE products SET stock = stock + :quantity, sales = GREATEST(sales - :quantity, 0) WHERE id = :productId",
-        { quantity: order.quantity, productId: order.product_id }
+        "UPDATE products SET stock = stock + :quantity, sales = GREATEST(sales - :quantity, 0) WHERE id = :productId AND appid = :appid",
+        { quantity: order.quantity, productId: order.product_id, appid: scopedAppId }
       );
       if (meta) {
         await conn.query(
-          "UPDATE acquisition_campaigns SET sold_count = GREATEST(sold_count - :quantity, 0) WHERE id = :campaignId",
-          { quantity: order.quantity, campaignId: meta.campaignId }
+          "UPDATE acquisition_campaigns SET sold_count = GREATEST(sold_count - :quantity, 0) WHERE id = :campaignId AND appid = :appid",
+          { quantity: order.quantity, campaignId: meta.campaignId, appid: scopedAppId }
         );
       }
       const rows = await loadOrderRows("WHERE o.id = :id", { id }, conn);
@@ -1611,7 +1696,7 @@ function createStore(pool = createPool()) {
     if (order.status !== "unpaid") throw appError(409, "订单状态不能支付");
     const buyer = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid FOR UPDATE", { id: order.user_id, appid: scopedAppId });
     if (!buyer) throw appError(404, "用户不存在");
-    const product = await one(conn, "SELECT * FROM products WHERE id = :id", { id: order.product_id });
+    const product = await one(conn, "SELECT * FROM products WHERE id = :id AND appid = :appid", { id: order.product_id, appid: scopedAppId });
     if (!product) throw appError(404, "商品不存在");
     const meta = await acquisitionOrderMeta(conn, order.id);
     let campaign = null;
@@ -1619,7 +1704,7 @@ function createStore(pool = createPool()) {
     let commissions = [];
     let lotteryRecord = null;
     if (meta) {
-      const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id FOR UPDATE`, { id: meta.campaignId });
+      const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id AND ac.appid = :appid FOR UPDATE`, { id: meta.campaignId, appid: scopedAppId });
       if (!row) throw appError(404, "拓客宝活动不存在");
       campaign = campaignRow(row);
       relation = await lockAcquisitionRelation(conn, campaign, buyer.id, meta.scene, "paid", scopedAppId);
@@ -1678,7 +1763,7 @@ function createStore(pool = createPool()) {
       let productId = campaignId ? Number(body.product_id || 0) : assertId(body.product_id, "商品 ID");
       let campaign = null;
       if (campaignId) {
-        const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id FOR UPDATE`, { id: assertId(campaignId, "拓客宝活动 ID") });
+        const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id AND ac.appid = :appid FOR UPDATE`, { id: assertId(campaignId, "拓客宝活动 ID"), appid: scopedAppId });
         if (!row) throw appError(404, "拓客宝活动不存在");
         campaign = campaignRow(row);
         if (campaign.status !== "published") throw appError(409, "活动未发布");
@@ -1695,22 +1780,22 @@ function createStore(pool = createPool()) {
         if (Number(campaign.stock) - Number(campaign.sold_count || 0) < quantity) throw appError(409, "活动库存不足");
         productId = campaign.product_id;
       }
-      const product = await one(conn, "SELECT * FROM products WHERE id = :id AND status = 'on' FOR UPDATE", { id: productId });
+      const product = await one(conn, "SELECT * FROM products WHERE id = :id AND appid = :appid AND status = 'on' FOR UPDATE", { id: productId, appid: scopedAppId });
       if (!product) throw appError(404, "商品不存在或已下架");
       if (Number(product.stock) < quantity) throw appError(409, "库存不足");
       const orderAddress = await resolveOrderAddress(conn, buyer.id, body, scopedAppId);
 
       const amount = money(Number(campaign ? campaign.lead_price : product.price) * quantity);
       await conn.query(
-        "UPDATE products SET stock = stock - :quantity, sales = sales + :quantity WHERE id = :id AND stock >= :quantity",
-        { quantity, id: product.id }
+        "UPDATE products SET stock = stock - :quantity, sales = sales + :quantity WHERE id = :id AND appid = :appid AND stock >= :quantity",
+        { quantity, id: product.id, appid: scopedAppId }
       );
       if (campaign) {
         const [stockResult] = await conn.query(
           `UPDATE acquisition_campaigns
            SET sold_count = sold_count + :quantity
-           WHERE id = :id AND stock >= sold_count + :quantity`,
-          { quantity, id: campaign.id }
+           WHERE id = :id AND appid = :appid AND stock >= sold_count + :quantity`,
+          { quantity, id: campaign.id, appid: scopedAppId }
         );
         if (!stockResult.affectedRows) throw appError(409, "活动库存不足");
       }
@@ -1837,21 +1922,23 @@ function createStore(pool = createPool()) {
     });
   }
 
-  async function patchOrder(orderId, body) {
+  async function patchOrder(orderId, body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     return tx(pool, async conn => {
       const id = assertId(orderId, "订单 ID");
-      const order = await one(conn, "SELECT * FROM orders WHERE id = :id FOR UPDATE", { id });
+      const order = await one(conn, "SELECT * FROM orders WHERE id = :id AND appid = :appid FOR UPDATE", { id, appid: scopedAppId });
       if (!order) throw appError(404, "订单不存在");
       if (body.action === "ship") {
         if (order.status !== "paid") throw appError(409, "只有已付款订单可以发货");
-        await conn.query("UPDATE orders SET status = 'shipped', logistics_no = :logisticsNo WHERE id = :id", {
+        await conn.query("UPDATE orders SET status = 'shipped', logistics_no = :logisticsNo WHERE id = :id AND appid = :appid", {
           id,
+          appid: scopedAppId,
           logisticsNo: String(body.logistics_no || `SF${Date.now()}`).trim()
         });
       } else if (body.action === "refund") {
         if (order.status === "refunded") throw appError(409, "订单已经退款");
-        await conn.query("UPDATE orders SET status = 'refunded' WHERE id = :id", { id });
-        await conn.query("UPDATE commissions SET status = 'canceled' WHERE order_id = :id", { id });
+        await conn.query("UPDATE orders SET status = 'refunded' WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
+        await conn.query("UPDATE commissions SET status = 'canceled' WHERE order_id = :id AND appid = :appid", { id, appid: scopedAppId });
         await conn.query(
           `UPDATE withdrawals w
            JOIN commissions c ON c.beneficiary_id = w.user_id
@@ -1860,23 +1947,24 @@ function createStore(pool = createPool()) {
            SET w.status = 'rejected',
                w.review_note = '订单退款，直接到账奖励取消',
                w.reviewed_at = UTC_TIMESTAMP()
-           WHERE w.status IN ('pending','approved')`,
-          { id }
+           WHERE w.status IN ('pending','approved') AND w.appid = :appid AND c.appid = :appid`,
+          { id, appid: scopedAppId }
         );
-        await conn.query("UPDATE products SET stock = stock + :quantity WHERE id = :productId", {
+        await conn.query("UPDATE products SET stock = stock + :quantity WHERE id = :productId AND appid = :appid", {
           quantity: order.quantity,
-          productId: order.product_id
+          productId: order.product_id,
+          appid: scopedAppId
         });
       } else if (body.action === "receive") {
-        await conn.query("UPDATE orders SET status = 'received', received_at = UTC_TIMESTAMP() WHERE id = :id", { id });
+        await conn.query("UPDATE orders SET status = 'received', received_at = UTC_TIMESTAMP() WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
         await conn.query(
-          "UPDATE commissions SET status = 'withdrawable', available_at = UTC_TIMESTAMP() WHERE order_id = :id AND status = 'pending'",
-          { id }
+          "UPDATE commissions SET status = 'withdrawable', available_at = UTC_TIMESTAMP() WHERE order_id = :id AND appid = :appid AND status = 'pending'",
+          { id, appid: scopedAppId }
         );
       } else {
         throw appError(422, "未知订单操作");
       }
-      const rows = await loadOrderRows("WHERE o.id = :id", { id }, conn);
+      const rows = await loadOrderRows("WHERE o.id = :id AND o.appid = :appid", { id, appid: scopedAppId }, conn);
       return orderRow(rows[0]);
     });
   }
@@ -1899,7 +1987,7 @@ function createStore(pool = createPool()) {
 
   async function listCommissions({ userId = null, appid = "" } = {}) {
     const filters = [];
-    const params = {};
+    const params = { appid: null };
     if (appid) {
       filters.push("c.appid = :appid");
       params.appid = normalizeAppId(appid);
@@ -1920,10 +2008,10 @@ function createStore(pool = createPool()) {
         buyer.nickname buyer_nickname, buyer.phone buyer_phone, buyer.avatar buyer_avatar,
         b.nickname beneficiary_nickname, b.phone beneficiary_phone, b.avatar beneficiary_avatar
       FROM commissions c
-      LEFT JOIN orders o ON o.id = c.order_id
-      LEFT JOIN products p ON p.id = o.product_id
-      LEFT JOIN users buyer ON buyer.id = c.buyer_id
-      LEFT JOIN users b ON b.id = c.beneficiary_id
+      LEFT JOIN orders o ON o.id = c.order_id AND (:appid IS NULL OR o.appid = :appid)
+      LEFT JOIN products p ON p.id = o.product_id AND (:appid IS NULL OR p.appid = :appid)
+      LEFT JOIN users buyer ON buyer.id = c.buyer_id AND (:appid IS NULL OR buyer.appid = :appid)
+      LEFT JOIN users b ON b.id = c.beneficiary_id AND (:appid IS NULL OR b.appid = :appid)
       ${where}
       ORDER BY c.created_at DESC, c.id DESC
     `, params);
@@ -1934,7 +2022,7 @@ function createStore(pool = createPool()) {
     const scopedAppId = normalizeAppId(appid);
     const id = assertId(userId, "用户 ID");
     const user = await getUser(id, pool, scopedAppId);
-    const appSettings = await settings();
+    const appSettings = await settings(pool, scopedAppId);
     const directCustomers = await many(pool, `
       SELECT u.*, (SELECT COUNT(*) FROM users child WHERE child.parent_id = u.id AND child.appid = :appid) children_count
       FROM users u
@@ -1980,7 +2068,7 @@ function createStore(pool = createPool()) {
       const userId = assertId(body.user_id, "用户 ID");
       const amount = money(body.amount);
       await getUser(userId, conn, scopedAppId);
-      const appSettings = await settings(conn);
+      const appSettings = await settings(conn, scopedAppId);
       if (amount < Number(appSettings.min_withdrawal || 0)) {
         throw appError(422, `最低提现金额为 ${appSettings.min_withdrawal} 元`);
       }
@@ -2001,8 +2089,8 @@ function createStore(pool = createPool()) {
     const tenant = typeof tenantOrAppid === "object" ? tenantOrAppid : null;
     const scopedAppId = normalizeAppId(tenant?.appid || tenantOrAppid);
     const user = await getUser(userId, pool, scopedAppId);
-    const product = await getPublicProduct(productId);
-    const appSettings = await settings();
+    const product = await getPublicProduct(productId, pool, scopedAppId);
+    const appSettings = await settings(pool, scopedAppId);
     const paths = productAssetPaths(product.id, user.id);
     let qrcodeBuffer;
     try {
@@ -2042,7 +2130,7 @@ function createStore(pool = createPool()) {
     const tenant = typeof tenantOrAppid === "object" ? tenantOrAppid : null;
     const scopedAppId = normalizeAppId(tenant?.appid || tenantOrAppid);
     const user = await getUser(userId, pool, scopedAppId);
-    const campaign = await getAcquisitionCampaign(campaignId);
+    const campaign = await getAcquisitionCampaign(campaignId, pool, scopedAppId);
     if (campaign.status !== "published") throw appError(404, "活动未发布");
     const now = Date.now();
     if (new Date(campaign.start_at).getTime() > now || new Date(campaign.end_at).getTime() < now) {
@@ -2082,46 +2170,50 @@ function createStore(pool = createPool()) {
     };
   }
 
-  async function dashboard() {
+  async function dashboard(appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const metrics = await one(pool, `
       SELECT
         COALESCE(SUM(CASE WHEN o.status IN ('paid','shipped','received') THEN o.amount ELSE 0 END), 0) sales,
         COALESCE(SUM(CASE WHEN o.status IN ('paid','shipped','received') THEN o.amount ELSE 0 END), 0) paid_sales,
         COALESCE(SUM(CASE WHEN o.status IN ('paid','shipped','received') THEN 1 ELSE 0 END), 0) orders,
-        (SELECT COUNT(*) FROM users) users,
-        (SELECT COUNT(*) FROM products WHERE status = 'on') products_on,
-        (SELECT COALESCE(SUM(amount), 0) FROM commissions WHERE status <> 'canceled') commission,
-        (SELECT COALESCE(SUM(amount), 0) FROM withdrawals WHERE status = 'pending') pending_withdrawals
+        (SELECT COUNT(*) FROM users WHERE appid = :appid) users,
+        (SELECT COUNT(*) FROM products WHERE appid = :appid AND status = 'on') products_on,
+        (SELECT COALESCE(SUM(amount), 0) FROM commissions WHERE appid = :appid AND status <> 'canceled') commission,
+        (SELECT COALESCE(SUM(amount), 0) FROM withdrawals WHERE appid = :appid AND status = 'pending') pending_withdrawals
       FROM orders o
-    `);
-    const recentRows = await loadOrderRows("", {});
+      WHERE o.appid = :appid
+    `, { appid: scopedAppId });
+    const recentRows = await loadOrderRows("WHERE o.appid = :appid", { appid: scopedAppId });
     const topRows = await many(pool, `
       SELECT u.*,
         COALESCE(SUM(CASE WHEN c.status <> 'canceled' THEN c.amount ELSE 0 END), 0) total_commission,
-        (SELECT COUNT(*) FROM users child WHERE child.parent_id = u.id) direct_count
+        (SELECT COUNT(*) FROM users child WHERE child.parent_id = u.id AND child.appid = :appid) direct_count
       FROM users u
-      LEFT JOIN commissions c ON c.beneficiary_id = u.id
+      LEFT JOIN commissions c ON c.beneficiary_id = u.id AND c.appid = :appid
+      WHERE u.appid = :appid
       GROUP BY u.id
       ORDER BY total_commission DESC, direct_count DESC
       LIMIT 6
-    `);
+    `, { appid: scopedAppId });
     const featuredCampaignRow = await one(pool, `
       ${campaignSelect()}
+      WHERE ac.appid = :appid
       ORDER BY
         CASE ac.status WHEN 'published' THEN 0 WHEN 'draft' THEN 1 WHEN 'ended' THEN 2 ELSE 3 END,
         order_count DESC,
         ac.updated_at DESC,
         ac.id DESC
       LIMIT 1
-    `);
+    `, { appid: scopedAppId });
     const featuredCampaign = featuredCampaignRow ? campaignRow(featuredCampaignRow) : null;
     const campaignOrderJoin = featuredCampaign
-      ? "JOIN acquisition_orders ao ON ao.order_id = o.id AND ao.campaign_id = :campaignId"
-      : "LEFT JOIN acquisition_orders ao ON ao.order_id = o.id";
+      ? "JOIN acquisition_orders ao ON ao.order_id = o.id AND ao.appid = :appid AND ao.campaign_id = :campaignId"
+      : "LEFT JOIN acquisition_orders ao ON ao.order_id = o.id AND ao.appid = :appid";
     const campaignCommissionJoin = featuredCampaign
-      ? "JOIN acquisition_orders ao ON ao.order_id = c.order_id AND ao.campaign_id = :campaignId"
-      : "LEFT JOIN acquisition_orders ao ON ao.order_id = c.order_id";
-    const campaignParams = featuredCampaign ? { campaignId: featuredCampaign.id } : {};
+      ? "JOIN acquisition_orders ao ON ao.order_id = c.order_id AND ao.appid = :appid AND ao.campaign_id = :campaignId"
+      : "LEFT JOIN acquisition_orders ao ON ao.order_id = c.order_id AND ao.appid = :appid";
+    const campaignParams = featuredCampaign ? { appid: scopedAppId, campaignId: featuredCampaign.id } : { appid: scopedAppId };
     const heartbeatParams = {
       ...campaignParams,
       campaignIdForRelation: featuredCampaign ? featuredCampaign.id : 0
@@ -2130,6 +2222,7 @@ function createStore(pool = createPool()) {
       SELECT COUNT(DISTINCT user_id) count
       FROM screen_heartbeats
       WHERE last_seen_at >= UTC_TIMESTAMP() - INTERVAL 5 SECOND
+        AND appid = :appid
         ${featuredCampaign ? "AND campaign_id = :campaignId" : ""}
     `, campaignParams);
     const liveRows = await many(pool, `
@@ -2141,18 +2234,21 @@ function createStore(pool = createPool()) {
         tl.nickname team_leader_nickname
       FROM screen_heartbeats hb
       LEFT JOIN screen_heartbeats newer ON newer.user_id = hb.user_id
+        AND newer.appid = :appid
         AND newer.last_seen_at >= UTC_TIMESTAMP() - INTERVAL 5 SECOND
         ${featuredCampaign ? "AND newer.campaign_id = :campaignId" : ""}
         AND (
           newer.last_seen_at > hb.last_seen_at
           OR (newer.last_seen_at = hb.last_seen_at AND newer.id > hb.id)
         )
-      LEFT JOIN users m ON m.id = hb.user_id
+      LEFT JOIN users m ON m.id = hb.user_id AND m.appid = :appid
       LEFT JOIN acquisition_relations ar ON ar.member_id = hb.user_id
+        AND ar.appid = :appid
         AND ar.campaign_id = :campaignIdForRelation
-      LEFT JOIN users i ON i.id = ar.inviter_id
-      LEFT JOIN users tl ON tl.id = ar.team_leader_id
+      LEFT JOIN users i ON i.id = ar.inviter_id AND i.appid = :appid
+      LEFT JOIN users tl ON tl.id = ar.team_leader_id AND tl.appid = :appid
       WHERE hb.last_seen_at >= UTC_TIMESTAMP() - INTERVAL 5 SECOND
+        AND hb.appid = :appid
         ${featuredCampaign ? "AND hb.campaign_id = :campaignId" : ""}
         AND newer.id IS NULL
       ORDER BY hb.last_seen_at DESC
@@ -2167,11 +2263,11 @@ function createStore(pool = createPool()) {
         tl.nickname team_leader_nickname
       FROM orders o
       ${campaignOrderJoin}
-      LEFT JOIN users u ON u.id = o.user_id
-      LEFT JOIN products p ON p.id = o.product_id
-      LEFT JOIN users i ON i.id = ao.inviter_id
-      LEFT JOIN users tl ON tl.id = ao.team_leader_id
-      WHERE o.status IN ('paid','shipped','received')
+      LEFT JOIN users u ON u.id = o.user_id AND u.appid = :appid
+      LEFT JOIN products p ON p.id = o.product_id AND p.appid = :appid
+      LEFT JOIN users i ON i.id = ao.inviter_id AND i.appid = :appid
+      LEFT JOIN users tl ON tl.id = ao.team_leader_id AND tl.appid = :appid
+      WHERE o.appid = :appid AND o.status IN ('paid','shipped','received')
       ORDER BY o.created_at DESC, o.id DESC
       LIMIT 8
     `, campaignParams);
@@ -2180,18 +2276,20 @@ function createStore(pool = createPool()) {
         u.id, u.nickname, u.avatar,
         COUNT(child.id) fans
       FROM users u
-      JOIN users child ON child.parent_id = u.id
+      JOIN users child ON child.parent_id = u.id AND child.appid = :appid
+      WHERE u.appid = :appid
       GROUP BY u.id
       ORDER BY fans DESC, u.id DESC
       LIMIT 8
-    `);
+    `, { appid: scopedAppId });
     const earningRankRows = await many(pool, `
       SELECT
         u.id, u.nickname, u.avatar,
         COALESCE(SUM(CASE WHEN c.status <> 'canceled' THEN c.amount ELSE 0 END), 0) earnings
       FROM commissions c
       ${campaignCommissionJoin}
-      JOIN users u ON u.id = c.beneficiary_id
+      JOIN users u ON u.id = c.beneficiary_id AND u.appid = :appid
+      WHERE c.appid = :appid
       GROUP BY u.id
       ORDER BY earnings DESC, u.id DESC
       LIMIT 8
@@ -2211,7 +2309,7 @@ function createStore(pool = createPool()) {
       FROM (
         SELECT inviter_id, COUNT(*) fans
         FROM acquisition_relations
-        WHERE inviter_id IS NOT NULL
+        WHERE appid = :appid AND inviter_id IS NOT NULL
         ${featuredCampaign ? "AND campaign_id = :campaignId" : ""}
         GROUP BY inviter_id
       ) ranked
@@ -2235,13 +2333,13 @@ function createStore(pool = createPool()) {
         COALESCE(SUM(CASE WHEN o.status IN ('paid','shipped','received') THEN o.amount ELSE 0 END), 0) paid_amount,
         COALESCE(SUM(CASE WHEN c.status <> 'canceled' THEN c.amount ELSE 0 END), 0) reward_amount
       FROM acquisition_campaigns ac
-      LEFT JOIN acquisition_relations ar ON ar.campaign_id = ac.id
-      LEFT JOIN acquisition_orders ao ON ao.campaign_id = ac.id
-      LEFT JOIN orders o ON o.id = ao.order_id
-      LEFT JOIN commissions c ON c.order_id = ao.order_id
-      WHERE ac.id = :campaignId
+      LEFT JOIN acquisition_relations ar ON ar.campaign_id = ac.id AND ar.appid = :appid
+      LEFT JOIN acquisition_orders ao ON ao.campaign_id = ac.id AND ao.appid = :appid
+      LEFT JOIN orders o ON o.id = ao.order_id AND o.appid = :appid
+      LEFT JOIN commissions c ON c.order_id = ao.order_id AND c.appid = :appid
+      WHERE ac.id = :campaignId AND ac.appid = :appid
     `, campaignParams) : null;
-    const totalRelationCount = await one(pool, "SELECT COUNT(*) count FROM acquisition_relations");
+    const totalRelationCount = await one(pool, "SELECT COUNT(*) count FROM acquisition_relations WHERE appid = :appid", { appid: scopedAppId });
     return {
       sales: money(metrics.sales),
       paid_sales: money(metrics.paid_sales),
@@ -2314,8 +2412,8 @@ function createStore(pool = createPool()) {
     };
   }
 
-  async function screenDashboard() {
-    const data = await dashboard();
+  async function screenDashboard(appid = "") {
+    const data = await dashboard(appid);
     const screen = data.battle_screen || {};
     return {
       ...screen,
@@ -2338,8 +2436,8 @@ function createStore(pool = createPool()) {
       const rawProductId = Number(body.product_id || 0);
       const campaignId = Number.isInteger(rawCampaignId) && rawCampaignId > 0 ? rawCampaignId : null;
       const productId = Number.isInteger(rawProductId) && rawProductId > 0 ? rawProductId : null;
-      if (campaignId) await getAcquisitionCampaign(campaignId, conn);
-      if (productId) await getPublicProduct(productId, conn);
+      if (campaignId) await getAcquisitionCampaign(campaignId, conn, scopedAppId);
+      if (productId) await getPublicProduct(productId, conn, scopedAppId);
       const payload = {
         appid: scopedAppId,
         userId,
@@ -2368,18 +2466,20 @@ function createStore(pool = createPool()) {
     });
   }
 
-  async function listDistributors() {
+  async function listDistributors(appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const rows = await many(pool, `
       SELECT u.*,
         p.nickname parent_nickname, p.phone parent_phone, p.avatar parent_avatar,
-        (SELECT COUNT(*) FROM users child WHERE child.parent_id = u.id) direct_count,
+        (SELECT COUNT(*) FROM users child WHERE child.parent_id = u.id AND child.appid = :appid) direct_count,
         COALESCE(SUM(CASE WHEN c.status <> 'canceled' THEN c.amount ELSE 0 END), 0) total_commission
       FROM users u
-      LEFT JOIN users p ON p.id = u.parent_id
-      LEFT JOIN commissions c ON c.beneficiary_id = u.id
+      LEFT JOIN users p ON p.id = u.parent_id AND p.appid = :appid
+      LEFT JOIN commissions c ON c.beneficiary_id = u.id AND c.appid = :appid
+      WHERE u.appid = :appid
       GROUP BY u.id, p.id
       ORDER BY u.created_at DESC
-    `);
+    `, { appid: scopedAppId });
     return Promise.all(rows.map(async row => ({
       ...normalizeUser(row),
       parent: row.parent_nickname ? {
@@ -2394,21 +2494,24 @@ function createStore(pool = createPool()) {
     })));
   }
 
-  async function patchDistributor(userId, body) {
+  async function patchDistributor(userId, body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     const id = assertId(userId, "用户 ID");
     if (!["approved", "pending", "rejected"].includes(body.status)) throw appError(422, "分销员状态不正确");
-    const [result] = await pool.query("UPDATE users SET distributor_status = :status WHERE id = :id", { status: body.status, id });
+    const [result] = await pool.query("UPDATE users SET distributor_status = :status WHERE id = :id AND appid = :appid", { status: body.status, id, appid: scopedAppId });
     if (!result.affectedRows) throw appError(404, "用户不存在");
-    return getUser(id);
+    return getUser(id, pool, scopedAppId);
   }
 
-  async function listWithdrawals() {
+  async function listWithdrawals(appid = "") {
+    const scopedAppId = normalizeAppId(appid);
     const rows = await many(pool, `
       SELECT w.*, u.nickname user_nickname, u.phone user_phone, u.avatar user_avatar
       FROM withdrawals w
-      LEFT JOIN users u ON u.id = w.user_id
+      LEFT JOIN users u ON u.id = w.user_id AND u.appid = :appid
+      WHERE w.appid = :appid
       ORDER BY w.created_at DESC, w.id DESC
-    `);
+    `, { appid: scopedAppId });
     return rows.map(row => ({
       id: row.id,
       user_id: row.user_id,
@@ -2428,17 +2531,18 @@ function createStore(pool = createPool()) {
     }));
   }
 
-  async function patchWithdrawal(withdrawalId, body) {
+  async function patchWithdrawal(withdrawalId, body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
     return tx(pool, async conn => {
       const id = assertId(withdrawalId, "提现 ID");
-      const withdrawal = await one(conn, "SELECT * FROM withdrawals WHERE id = :id FOR UPDATE", { id });
+      const withdrawal = await one(conn, "SELECT * FROM withdrawals WHERE id = :id AND appid = :appid FOR UPDATE", { id, appid: scopedAppId });
       if (!withdrawal) throw appError(404, "提现申请不存在");
       if (body.action !== "pay" && withdrawal.status !== "pending") throw appError(409, "该提现申请已经审核");
       if (body.action === "pay" && !["pending", "approved"].includes(withdrawal.status)) throw appError(409, "该提现申请不能打款");
 
       let status;
       let note;
-      const appSettings = await settings(conn);
+      const appSettings = await settings(conn, scopedAppId);
       if (body.action === "approve") {
         status = appSettings.auto_pay_enabled ? "paidout" : "approved";
         note = String(body.review_note || "审核通过，等待企业付款").slice(0, 120);
@@ -2452,20 +2556,23 @@ function createStore(pool = createPool()) {
         throw appError(422, "未知提现操作");
       }
       await conn.query(
-        "UPDATE withdrawals SET status = :status, review_note = :note, reviewed_at = UTC_TIMESTAMP() WHERE id = :id",
-        { status, note, id }
+        "UPDATE withdrawals SET status = :status, review_note = :note, reviewed_at = UTC_TIMESTAMP() WHERE id = :id AND appid = :appid",
+        { status, note, id, appid: scopedAppId }
       );
-      return one(conn, "SELECT * FROM withdrawals WHERE id = :id", { id });
+      return one(conn, "SELECT * FROM withdrawals WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
     });
   }
 
-  async function updateSettings(body) {
+  async function updateSettings(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
+    await settings(pool, scopedAppId);
     await pool.query(
       `UPDATE app_settings
        SET commission_level_1 = :level1, commission_level_2 = :level2, min_withdrawal = :minWithdrawal,
            compliance_name = :complianceName, auto_pay_enabled = :autoPayEnabled
-       WHERE id = 1`,
+       WHERE appid = :appid`,
       {
+        appid: scopedAppId,
         level1: Number(body.commission_level_1),
         level2: Number(body.commission_level_2),
         minWithdrawal: Number(body.min_withdrawal),
@@ -2473,7 +2580,7 @@ function createStore(pool = createPool()) {
         autoPayEnabled: Boolean(body.auto_pay_enabled)
       }
     );
-    return settings();
+    return settings(pool, scopedAppId);
   }
 
   async function close() {
@@ -2483,6 +2590,7 @@ function createStore(pool = createPool()) {
   return {
     ping,
     close,
+    verifyAdminLogin,
     login,
     wechatLogin,
     getUser,

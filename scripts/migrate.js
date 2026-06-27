@@ -43,6 +43,7 @@ async function main() {
   await migrateScreenHeartbeats(conn);
   await migratePayments(conn);
   await migrateTenancy(conn);
+  await migrateAdminUsers(conn);
   await conn.end();
   console.log(`Migrated database ${database}`);
 }
@@ -52,13 +53,17 @@ async function migrateTenancy(conn) {
   const tables = [
     "users",
     "user_addresses",
+    "products",
+    "acquisition_campaigns",
+    "acquisition_materials",
     "orders",
     "acquisition_orders",
     "acquisition_relations",
     "acquisition_lottery_records",
     "commissions",
     "withdrawals",
-    "screen_heartbeats"
+    "screen_heartbeats",
+    "app_settings"
   ];
 
   for (const table of tables) {
@@ -71,6 +76,15 @@ async function migrateTenancy(conn) {
   await addIndexIfMissing(conn, "users", "idx_users_appid_created", "KEY idx_users_appid_created (appid, created_at)");
 
   await addIndexIfMissing(conn, "user_addresses", "idx_user_addresses_app_user_default", "KEY idx_user_addresses_app_user_default (appid, user_id, is_default, id)");
+
+  await addIndexIfMissing(conn, "products", "idx_products_app_status_category", "KEY idx_products_app_status_category (appid, status, category)");
+
+  await addIndexIfMissing(conn, "acquisition_campaigns", "idx_acquisition_app_status_time", "KEY idx_acquisition_app_status_time (appid, status, start_at, end_at)");
+  await addIndexIfMissing(conn, "acquisition_campaigns", "idx_acquisition_app_product", "KEY idx_acquisition_app_product (appid, product_id)");
+
+  await addIndexIfMissing(conn, "acquisition_materials", "idx_materials_app_type_sort", "KEY idx_materials_app_type_sort (appid, type, sort_order, id)");
+
+  await addIndexIfMissing(conn, "app_settings", "uk_app_settings_appid", "UNIQUE KEY uk_app_settings_appid (appid)");
 
   await addIndexIfMissing(conn, "orders", "idx_orders_app_user_created", "KEY idx_orders_app_user_created (appid, user_id, created_at)");
   await addIndexIfMissing(conn, "orders", "idx_orders_app_status_created", "KEY idx_orders_app_status_created (appid, status, created_at)");
@@ -97,6 +111,26 @@ async function migrateTenancy(conn) {
   await addIndexIfMissing(conn, "screen_heartbeats", "idx_screen_heartbeat_seen_app", "KEY idx_screen_heartbeat_seen_app (appid, last_seen_at)");
   await addIndexIfMissing(conn, "screen_heartbeats", "idx_screen_heartbeat_campaign_seen_app", "KEY idx_screen_heartbeat_campaign_seen_app (appid, campaign_id, last_seen_at)");
   await addIndexIfMissing(conn, "screen_heartbeats", "idx_screen_heartbeat_product_seen_app", "KEY idx_screen_heartbeat_product_seen_app (appid, product_id, last_seen_at)");
+}
+
+async function migrateAdminUsers(conn) {
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS admin_users (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      appid VARCHAR(32) NOT NULL DEFAULT '',
+      username VARCHAR(64) NOT NULL,
+      password_hash VARCHAR(160) NOT NULL,
+      status ENUM('active','disabled') NOT NULL DEFAULT 'active',
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_admin_users_username (username),
+      KEY idx_admin_users_appid (appid, status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  `);
+  await addColumnIfMissing(conn, "admin_users", "appid", "VARCHAR(32) NOT NULL DEFAULT '' AFTER id");
+  await addColumnIfMissing(conn, "admin_users", "status", "ENUM('active','disabled') NOT NULL DEFAULT 'active'");
+  await addIndexIfMissing(conn, "admin_users", "uk_admin_users_username", "UNIQUE KEY uk_admin_users_username (username)");
+  await addIndexIfMissing(conn, "admin_users", "idx_admin_users_appid", "KEY idx_admin_users_appid (appid, status)");
 }
 
 async function migrateProducts(conn) {

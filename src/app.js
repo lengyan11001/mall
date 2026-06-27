@@ -6,6 +6,7 @@ const { URL } = require("url");
 const { codeToSession } = require("./wechat");
 const { decryptResource, verifyWechatpaySignature } = require("./wechat-pay");
 const {
+  defaultTenant,
   paymentTenants,
   publicTenant,
   resolveTenantFromRequest
@@ -86,23 +87,68 @@ function safeEqualText(left, right) {
   return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+function adminTokenSecret() {
+  return process.env.ADMIN_TOKEN_SECRET || process.env.ADMIN_PASSWORD || "mall-admin-token";
+}
+
+function signAdminToken(payload) {
+  const data = Buffer.from(JSON.stringify({
+    ...payload,
+    exp: Date.now() + Number(process.env.ADMIN_TOKEN_TTL_MS || 7 * 86400000)
+  })).toString("base64url");
+  const signature = crypto.createHmac("sha256", adminTokenSecret()).update(data).digest("base64url");
+  return `${data}.${signature}`;
+}
+
+function verifyAdminToken(token = "") {
+  const [data, signature] = String(token || "").split(".");
+  if (!data || !signature) return null;
+  const expected = crypto.createHmac("sha256", adminTokenSecret()).update(data).digest("base64url");
+  if (!safeEqualText(signature, expected)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(data, "base64url").toString("utf8"));
+    if (!payload.appid || Number(payload.exp || 0) < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
 function hasAdminAuth(req) {
   const username = process.env.ADMIN_USERNAME || "";
   const password = process.env.ADMIN_PASSWORD || "";
-  if (!username || !password) return false;
   const token = (req.headers["x-admin-token"] || "").toString();
+  const admin = verifyAdminToken(token);
+  if (admin) {
+    req.admin = admin;
+    return true;
+  }
+  if (!username || !password) return false;
   const expectedToken = crypto.createHash("sha256").update(`${username}:${password}`).digest("hex");
-  if (token && safeEqualText(token, expectedToken)) return true;
+  if (token && safeEqualText(token, expectedToken)) {
+    const fallback = defaultTenant();
+    req.admin = { username, appid: fallback?.appid || "" };
+    return true;
+  }
   const header = req.headers.authorization || "";
   if (!header.startsWith("Basic ")) return false;
   const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
   const splitAt = decoded.indexOf(":");
   if (splitAt < 0) return false;
-  return safeEqualText(decoded.slice(0, splitAt), username) && safeEqualText(decoded.slice(splitAt + 1), password);
+  const ok = safeEqualText(decoded.slice(0, splitAt), username) && safeEqualText(decoded.slice(splitAt + 1), password);
+  if (ok) {
+    const fallback = defaultTenant();
+    req.admin = { username, appid: fallback?.appid || "" };
+  }
+  return ok;
 }
 
 function requireAdmin(req, res, isApi = false) {
-  if (process.env.NODE_ENV !== "production" && !process.env.ADMIN_PASSWORD) return true;
+  if (process.env.NODE_ENV !== "production" && !process.env.ADMIN_PASSWORD) {
+    const fallback = defaultTenant();
+    req.admin = { username: "dev", appid: fallback?.appid || "" };
+    return true;
+  }
   if (hasAdminAuth(req)) return true;
   if (isApi) {
     fail(res, 401, "后台需要登录");
@@ -206,20 +252,12 @@ function createServer({ store }) {
     }
 
     if (req.method === "POST" && pathname === "/api/admin/login") {
-      const username = process.env.ADMIN_USERNAME || "";
-      const password = process.env.ADMIN_PASSWORD || "";
       const body = await readBody(req);
-      if (!username || !password) {
-        fail(res, 503, "后台账号未配置");
-        return;
-      }
-      if (!safeEqualText(body.username, username) || !safeEqualText(body.password, password)) {
-        fail(res, 401, "账号或密码不正确");
-        return;
-      }
+      const admin = await store.verifyAdminLogin(body);
       ok(res, {
-        token: crypto.createHash("sha256").update(`${username}:${password}`).digest("hex"),
-        username
+        token: signAdminToken(admin),
+        username: admin.username,
+        appid: admin.appid
       });
       return;
     }
@@ -281,22 +319,27 @@ function createServer({ store }) {
     }
 
     if (req.method === "GET" && pathname === "/api/products") {
+      const tenant = resolveTenantFromRequest(req, searchParams);
       ok(res, await store.listPublicProducts({
         category: searchParams.get("category") || "全部",
-        keyword: searchParams.get("keyword") || ""
+        keyword: searchParams.get("keyword") || "",
+        appid: tenant.appid
       }));
       return;
     }
 
     const productId = matchId(pathname, "/api/products/");
     if (req.method === "GET" && productId) {
-      ok(res, await store.getPublicProduct(productId));
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      ok(res, await store.getPublicProduct(productId, undefined, tenant.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/acquisition/campaigns") {
+      const tenant = resolveTenantFromRequest(req, searchParams);
       ok(res, await store.listPublicAcquisitionCampaigns({
-        keyword: searchParams.get("keyword") || ""
+        keyword: searchParams.get("keyword") || "",
+        appid: tenant.appid
       }));
       return;
     }
@@ -399,7 +442,8 @@ function createServer({ store }) {
     }
 
     if (req.method === "GET" && pathname === "/api/screen/dashboard") {
-      ok(res, await store.screenDashboard());
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      ok(res, await store.screenDashboard(tenant.appid));
       return;
     }
 
@@ -411,136 +455,137 @@ function createServer({ store }) {
     }
 
     if (req.method === "GET" && pathname === "/api/admin/dashboard") {
-      ok(res, await store.dashboard());
+      ok(res, await store.dashboard(req.admin.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/admin/products") {
-      ok(res, await store.listAdminProducts());
+      ok(res, await store.listAdminProducts(req.admin.appid));
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/admin/products") {
-      ok(res, await store.createProduct(await readBody(req)));
+      ok(res, await store.createProduct(await readBody(req), req.admin.appid));
       return;
     }
 
     const adminProductId = matchId(pathname, "/api/admin/products/");
     if (req.method === "PUT" && adminProductId) {
-      ok(res, await store.updateProduct(adminProductId, await readBody(req)));
+      ok(res, await store.updateProduct(adminProductId, await readBody(req), req.admin.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/admin/acquisition/campaigns") {
       ok(res, await store.listAcquisitionCampaigns({
         status: searchParams.get("status") || "",
-        keyword: searchParams.get("keyword") || ""
+        keyword: searchParams.get("keyword") || "",
+        appid: req.admin.appid
       }));
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/admin/acquisition/campaigns") {
-      ok(res, await store.createAcquisitionCampaign(await readBody(req)));
+      ok(res, await store.createAcquisitionCampaign(await readBody(req), req.admin.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/admin/acquisition/materials") {
-      ok(res, await store.listAcquisitionMaterials());
+      ok(res, await store.listAcquisitionMaterials(req.admin.appid));
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/admin/acquisition/materials") {
-      ok(res, await store.saveAcquisitionMaterial(await readBody(req)));
+      ok(res, await store.saveAcquisitionMaterial(await readBody(req), req.admin.appid));
       return;
     }
 
     const acquisitionId = matchId(pathname, "/api/admin/acquisition/campaigns/");
     if (acquisitionId) {
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
-        ok(res, await store.getAcquisitionCampaign(acquisitionId));
+        ok(res, await store.getAcquisitionCampaign(acquisitionId, undefined, req.admin.appid));
         return;
       }
       if (req.method === "PUT" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
-        ok(res, await store.updateAcquisitionCampaign(acquisitionId, await readBody(req)));
+        ok(res, await store.updateAcquisitionCampaign(acquisitionId, await readBody(req), req.admin.appid));
         return;
       }
       if (req.method === "PATCH" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
-        ok(res, await store.patchAcquisitionCampaign(acquisitionId, await readBody(req)));
+        ok(res, await store.patchAcquisitionCampaign(acquisitionId, await readBody(req), req.admin.appid));
         return;
       }
       if (req.method === "POST" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/qrcodes`) {
-        ok(res, await store.saveAcquisitionQrcode(acquisitionId, await readBody(req)));
+        ok(res, await store.saveAcquisitionQrcode(acquisitionId, await readBody(req), req.admin.appid));
         return;
       }
       const qrcodePrefix = `/api/admin/acquisition/campaigns/${acquisitionId}/qrcodes/`;
       const qrcodeId = matchId(pathname, qrcodePrefix);
       if (req.method === "DELETE" && qrcodeId) {
-        ok(res, await store.deleteAcquisitionQrcode(acquisitionId, qrcodeId));
+        ok(res, await store.deleteAcquisitionQrcode(acquisitionId, qrcodeId, req.admin.appid));
         return;
       }
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/relations`) {
-        ok(res, await store.listAcquisitionRelations(acquisitionId));
+        ok(res, await store.listAcquisitionRelations(acquisitionId, req.admin.appid));
         return;
       }
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/orders`) {
-        ok(res, await store.listAcquisitionOrders(acquisitionId));
+        ok(res, await store.listAcquisitionOrders(acquisitionId, req.admin.appid));
         return;
       }
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/rewards`) {
-        ok(res, await store.listAcquisitionRewards(acquisitionId));
+        ok(res, await store.listAcquisitionRewards(acquisitionId, req.admin.appid));
         return;
       }
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/dashboard`) {
-        ok(res, await store.acquisitionDashboard(acquisitionId));
+        ok(res, await store.acquisitionDashboard(acquisitionId, req.admin.appid));
         return;
       }
     }
 
     if (req.method === "GET" && pathname === "/api/admin/orders") {
-      ok(res, await store.listOrders({ userId: null }));
+      ok(res, await store.listOrders({ userId: null, appid: req.admin.appid }));
       return;
     }
 
     const adminOrderId = matchId(pathname, "/api/admin/orders/");
     if (req.method === "PATCH" && adminOrderId) {
-      ok(res, await store.patchOrder(adminOrderId, await readBody(req)));
+      ok(res, await store.patchOrder(adminOrderId, await readBody(req), req.admin.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/admin/distributors") {
-      ok(res, await store.listDistributors());
+      ok(res, await store.listDistributors(req.admin.appid));
       return;
     }
 
     const distributorId = matchId(pathname, "/api/admin/distributors/");
     if (req.method === "PATCH" && distributorId) {
-      ok(res, await store.patchDistributor(distributorId, await readBody(req)));
+      ok(res, await store.patchDistributor(distributorId, await readBody(req), req.admin.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/admin/commissions") {
-      ok(res, await store.listCommissions());
+      ok(res, await store.listCommissions({ appid: req.admin.appid }));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/admin/withdrawals") {
-      ok(res, await store.listWithdrawals());
+      ok(res, await store.listWithdrawals(req.admin.appid));
       return;
     }
 
     const withdrawalId = matchId(pathname, "/api/admin/withdrawals/");
     if (req.method === "PATCH" && withdrawalId) {
-      ok(res, await store.patchWithdrawal(withdrawalId, await readBody(req)));
+      ok(res, await store.patchWithdrawal(withdrawalId, await readBody(req), req.admin.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/admin/settings") {
-      ok(res, await store.settings());
+      ok(res, await store.settings(undefined, req.admin.appid));
       return;
     }
 
     if (req.method === "PUT" && pathname === "/api/admin/settings") {
-      ok(res, await store.updateSettings(await readBody(req)));
+      ok(res, await store.updateSettings(await readBody(req), req.admin.appid));
       return;
     }
 

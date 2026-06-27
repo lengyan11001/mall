@@ -129,7 +129,8 @@ function renderScreen(screen) {
 }
 
 async function loadScreen() {
-  const screen = await api("/api/screen/dashboard");
+  const query = new URLSearchParams(window.location.search);
+  const screen = await api(`/api/screen/dashboard${query.toString() ? `?${query.toString()}` : ""}`);
   renderScreen(screen);
 }
 

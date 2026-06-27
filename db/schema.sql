@@ -1,11 +1,25 @@
 CREATE TABLE IF NOT EXISTS app_settings (
   id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   commission_level_1 DECIMAL(5, 4) NOT NULL DEFAULT 0.1200,
   commission_level_2 DECIMAL(5, 4) NOT NULL DEFAULT 0.0500,
   min_withdrawal DECIMAL(10, 2) NOT NULL DEFAULT 10.00,
   compliance_name VARCHAR(20) NOT NULL DEFAULT '推荐有礼',
   auto_pay_enabled TINYINT(1) NOT NULL DEFAULT 0,
-  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_app_settings_appid (appid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS admin_users (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
+  username VARCHAR(64) NOT NULL,
+  password_hash VARCHAR(160) NOT NULL,
+  status ENUM('active','disabled') NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_admin_users_username (username),
+  KEY idx_admin_users_appid (appid, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -52,6 +66,7 @@ CREATE TABLE IF NOT EXISTS user_addresses (
 
 CREATE TABLE IF NOT EXISTS products (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   title VARCHAR(160) NOT NULL,
   subtitle VARCHAR(255) NOT NULL DEFAULT '',
   product_no VARCHAR(64) NOT NULL DEFAULT '',
@@ -83,6 +98,7 @@ CREATE TABLE IF NOT EXISTS products (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_products_no (product_no),
   KEY idx_products_barcode (barcode),
+  KEY idx_products_app_status_category (appid, status, category),
   KEY idx_products_status_category (status, category),
   KEY idx_products_sales (sales),
   FULLTEXT KEY ft_products_title_desc (title, description)
@@ -90,6 +106,7 @@ CREATE TABLE IF NOT EXISTS products (
 
 CREATE TABLE IF NOT EXISTS acquisition_campaigns (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   name VARCHAR(160) NOT NULL,
   description VARCHAR(255) NOT NULL DEFAULT '',
   product_id BIGINT UNSIGNED NOT NULL,
@@ -143,6 +160,7 @@ CREATE TABLE IF NOT EXISTS acquisition_campaigns (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_acquisition_status_time (status, start_at, end_at),
+  KEY idx_acquisition_app_status_time (appid, status, start_at, end_at),
   KEY idx_acquisition_product (product_id),
   KEY idx_acquisition_default_inviter (default_inviter_id),
   CONSTRAINT fk_acquisition_product FOREIGN KEY (product_id) REFERENCES products(id),
@@ -214,12 +232,14 @@ CREATE TABLE IF NOT EXISTS screen_heartbeats (
 
 CREATE TABLE IF NOT EXISTS acquisition_materials (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
   type ENUM('qrcode_bg','share_poster','share_cover') NOT NULL,
   image_url VARCHAR(600) NOT NULL,
   style_config JSON NULL,
   sort_order INT NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_materials_app_type_sort (appid, type, sort_order, id),
   KEY idx_materials_type_sort (type, sort_order, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

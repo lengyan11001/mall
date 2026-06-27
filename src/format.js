@@ -77,6 +77,7 @@ function publicProduct(product) {
     : (product.image_url ? [product.image_url] : []);
   return {
     ...product,
+    appid: product.appid || "",
     subtitle: product.subtitle || "",
     product_no: product.product_no || "",
     barcode: product.barcode || "",
@@ -111,6 +112,7 @@ function campaignRow(row) {
   };
   return {
     id: row.id,
+    appid: row.appid || "",
     name: row.name,
     description: row.description || "",
     product_id: row.product_id,
