@@ -6,7 +6,7 @@ const { URL } = require("url");
 const { codeToSession } = require("./wechat");
 const { decryptResource, verifyWechatpaySignature } = require("./wechat-pay");
 const {
-  defaultTenant,
+  DEFAULT_LEGACY_APPID,
   paymentTenants,
   publicTenant,
   resolveTenantFromRequest
@@ -114,6 +114,10 @@ function verifyAdminToken(token = "") {
   }
 }
 
+function legacyAdminAppId() {
+  return process.env.ADMIN_APPID || process.env.WECHAT_LEGACY_APP_ID || DEFAULT_LEGACY_APPID;
+}
+
 function hasAdminAuth(req) {
   const username = process.env.ADMIN_USERNAME || "";
   const password = process.env.ADMIN_PASSWORD || "";
@@ -126,8 +130,7 @@ function hasAdminAuth(req) {
   if (!username || !password) return false;
   const expectedToken = crypto.createHash("sha256").update(`${username}:${password}`).digest("hex");
   if (token && safeEqualText(token, expectedToken)) {
-    const fallback = defaultTenant();
-    req.admin = { username, appid: fallback?.appid || "" };
+    req.admin = { username, appid: legacyAdminAppId() };
     return true;
   }
   const header = req.headers.authorization || "";
@@ -137,16 +140,14 @@ function hasAdminAuth(req) {
   if (splitAt < 0) return false;
   const ok = safeEqualText(decoded.slice(0, splitAt), username) && safeEqualText(decoded.slice(splitAt + 1), password);
   if (ok) {
-    const fallback = defaultTenant();
-    req.admin = { username, appid: fallback?.appid || "" };
+    req.admin = { username, appid: legacyAdminAppId() };
   }
   return ok;
 }
 
 function requireAdmin(req, res, isApi = false) {
   if (process.env.NODE_ENV !== "production" && !process.env.ADMIN_PASSWORD) {
-    const fallback = defaultTenant();
-    req.admin = { username: "dev", appid: fallback?.appid || "" };
+    req.admin = { username: "dev", appid: legacyAdminAppId() };
     return true;
   }
   if (hasAdminAuth(req)) return true;
