@@ -739,21 +739,21 @@ function createStore(pool = createPool()) {
         p.freight_template product_freight_template, p.delivery_methods product_delivery_methods,
         p.vip_enabled product_vip_enabled, p.created_at product_created_at,
         (SELECT COUNT(*) FROM acquisition_qrcodes q WHERE q.campaign_id = ac.id) qrcode_count,
-        (SELECT COUNT(*) FROM acquisition_relations r WHERE r.campaign_id = ac.id AND r.unlocked_at IS NULL) relation_count,
+        (SELECT COUNT(*) FROM acquisition_relations r WHERE r.campaign_id = ac.id AND r.appid = ac.appid AND r.unlocked_at IS NULL) relation_count,
         (
           SELECT COUNT(*)
           FROM acquisition_orders ao
-          JOIN orders o ON o.id = ao.order_id
-          WHERE ao.campaign_id = ac.id AND o.status IN ('paid','shipped','received')
+          JOIN orders o ON o.id = ao.order_id AND o.appid = ac.appid
+          WHERE ao.campaign_id = ac.id AND ao.appid = ac.appid AND o.status IN ('paid','shipped','received')
         ) order_count,
         (
           SELECT COALESCE(SUM(c.amount), 0)
           FROM acquisition_orders ao
-          JOIN commissions c ON c.order_id = ao.order_id
-          WHERE ao.campaign_id = ac.id AND c.status <> 'canceled'
+          JOIN commissions c ON c.order_id = ao.order_id AND c.appid = ac.appid
+          WHERE ao.campaign_id = ac.id AND ao.appid = ac.appid AND c.status <> 'canceled'
         ) reward_total
       FROM acquisition_campaigns ac
-      LEFT JOIN products p ON p.id = ac.product_id
+      LEFT JOIN products p ON p.id = ac.product_id AND p.appid = ac.appid
     `;
   }
 
