@@ -2110,7 +2110,8 @@ function createStore(pool = createPool()) {
       user,
       qrcodeBuffer,
       outputPath: paths.posterPath,
-      complianceName: appSettings.compliance_name
+      complianceName: appSettings.compliance_name,
+      brandName: tenant?.name || "非常好裂变"
     });
 
     return {
@@ -2155,7 +2156,8 @@ function createStore(pool = createPool()) {
       campaign,
       user,
       qrcodeBuffer,
-      outputPath: paths.posterPath
+      outputPath: paths.posterPath,
+      brandName: tenant?.name || "非常好裂变"
     });
 
     return {

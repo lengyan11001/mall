@@ -132,7 +132,7 @@ async function writeQrcode(scene, qrcodeBuffer) {
   return paths;
 }
 
-async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath }) {
+async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, brandName = "非常好裂变" }) {
   await ensureInviteDir();
   const title = campaign.name || campaign.product?.title || "拓客宝活动";
   const description = campaign.share_description || campaign.description || campaign.product?.description || "扫码进入小程序，参与活动并领取福利。";
@@ -161,7 +161,7 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath }) {
   <rect width="750" height="1200" fill="url(#bg)"/>
   <rect x="36" y="36" width="678" height="1128" rx="34" fill="#ffffff" opacity="0.94"/>
   <rect x="64" y="72" width="196" height="52" rx="26" fill="url(#accent)"/>
-  <text x="162" y="107" text-anchor="middle" font-size="26" font-weight="900" fill="#ffffff">必火次元</text>
+  <text x="162" y="107" text-anchor="middle" font-size="26" font-weight="900" fill="#ffffff">${escapeXml(brandName)}</text>
   <text x="64" y="156" font-size="28" font-weight="700" fill="#0f766e">专属邀请海报</text>
   ${titleLines}
   <rect x="64" y="292" width="170" height="48" rx="24" fill="#fff7ed"/>
@@ -178,15 +178,15 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath }) {
   <text x="392" y="976" font-size="28" font-weight="900" fill="#111827">扫码参加</text>
   <text x="392" y="1022" font-size="24" font-weight="700" fill="#4b5563">邀请人：${escapeXml(inviter)}</text>
   <text x="392" y="1064" font-size="22" font-weight="500" fill="#6b7280">进入后自动记录关系</text>
-  <text x="375" y="1142" text-anchor="middle" font-size="22" font-weight="600" fill="#6b7280">必火次元 · 潮玩周边</text>
+  <text x="375" y="1142" text-anchor="middle" font-size="22" font-weight="600" fill="#6b7280">${escapeXml(brandName)} · 裂变增长</text>
 </svg>`;
 
   await sharp(Buffer.from(svg)).png().toFile(outputPath);
 }
 
-async function buildProductPoster({ product, user, qrcodeBuffer, outputPath, complianceName = "Invite" }) {
+async function buildProductPoster({ product, user, qrcodeBuffer, outputPath, complianceName = "Invite", brandName = "非常好裂变" }) {
   await ensureProductDir();
-  const title = product.title || "必火次元";
+  const title = product.title || brandName;
   const subtitle = product.subtitle || product.description || "Scan to open product detail.";
   const inviter = user.nickname || `User${user.id}`;
   const price = Number(product.price || 0).toFixed(2);
@@ -206,7 +206,7 @@ async function buildProductPoster({ product, user, qrcodeBuffer, outputPath, com
       <path d="M128 710 C230 560 322 760 442 610 C494 546 586 560 638 500" fill="none" stroke="#38bdf8" stroke-width="20" stroke-linecap="round"/>
       <circle cx="176" cy="522" r="74" fill="#fb7185" opacity="0.78"/>
       <circle cx="590" cy="730" r="88" fill="#a78bfa" opacity="0.68"/>
-      <text x="110" y="804" font-size="30" font-weight="900" fill="#ffffff">必火次元</text>
+      <text x="110" y="804" font-size="30" font-weight="900" fill="#ffffff">${escapeXml(brandName)}</text>
     `;
   }
 
@@ -230,7 +230,7 @@ async function buildProductPoster({ product, user, qrcodeBuffer, outputPath, com
   <rect width="750" height="1200" fill="url(#bg)"/>
   <rect x="32" y="32" width="686" height="1136" rx="34" fill="#ffffff" opacity="0.96"/>
   <rect x="56" y="70" width="210" height="52" rx="26" fill="url(#brand)"/>
-  <text x="161" y="105" text-anchor="middle" font-size="26" font-weight="900" fill="#ffffff">必火次元</text>
+  <text x="161" y="105" text-anchor="middle" font-size="26" font-weight="900" fill="#ffffff">${escapeXml(brandName)}</text>
   ${titleLines}
   ${subtitleLines}
   <clipPath id="productClip"><rect x="70" y="394" width="610" height="430" rx="28"/></clipPath>

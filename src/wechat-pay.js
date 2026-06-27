@@ -114,7 +114,7 @@ async function createJsapiPrepay({ outTradeNo, description, amount, openid, atta
   return requestWechat("POST", "/v3/pay/transactions/jsapi", {
     appid: config.appid,
     mchid: config.mchid,
-    description: String(description || "必火次元订单").slice(0, 127),
+    description: String(description || `${tenant?.name || "小程序"}订单`).slice(0, 127),
     out_trade_no: outTradeNo,
     notify_url: config.notifyUrl,
     amount: {
