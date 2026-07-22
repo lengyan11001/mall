@@ -177,11 +177,35 @@ function pickAndUploadFile(kind = "image") {
     const picker = document.createElement("input");
     picker.type = "file";
     picker.accept = uploadAccept(kind);
+    picker.style.display = "none";
+    document.body.appendChild(picker);
     let settled = false;
+    let focusTimer = null;
+    let readyForCancel = false;
+    const cleanup = () => {
+      clearTimeout(focusTimer);
+      window.removeEventListener("focus", handleFocus, true);
+      picker.remove();
+    };
     const finish = value => {
       if (settled) return;
       settled = true;
+      cleanup();
       resolve(value);
+    };
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const handleFocus = () => {
+      if (!readyForCancel) return;
+      clearTimeout(focusTimer);
+      focusTimer = setTimeout(() => {
+        const hasFile = picker.files && picker.files.length;
+        if (!hasFile) finish(null);
+      }, 350);
     };
     picker.addEventListener("change", async () => {
       const file = picker.files && picker.files[0];
@@ -192,10 +216,14 @@ function pickAndUploadFile(kind = "image") {
       try {
         finish(await uploadAdminFile(file, kind));
       } catch (error) {
-        reject(error);
+        fail(error);
       }
     }, { once: true });
     picker.addEventListener("cancel", () => finish(null), { once: true });
+    window.addEventListener("focus", handleFocus, true);
+    setTimeout(() => {
+      readyForCancel = true;
+    }, 0);
     picker.click();
   });
 }
@@ -219,7 +247,7 @@ function renderImageUrlPreview(inputSelector, previewSelector) {
   renderImagePreview($(inputSelector), $(previewSelector));
 }
 
-function uploadControl(field, value = "", placeholder = "图片 URL", kind = "image") {
+function uploadControl(field, value = "", placeholder = "上传图片后自动生成链接，也可以粘贴图片链接", kind = "image") {
   const accept = uploadAccept(kind);
   const label = kind === "audio" ? "上传音频" : "上传图片";
   const preview = kind === "image" && value ? `<img src="${escapeAttr(value)}" alt="图片预览" />` : "";
@@ -806,7 +834,7 @@ function renderCampaignRows(type, rows = []) {
     $("#campaign-lottery-prize-rows").innerHTML = list.map(prize => `
       <tr data-row-type="lottery-prize">
         <td><input class="input" data-field="name" value="${escapeAttr(prize.name || "")}" placeholder="谢谢参与" /></td>
-        <td>${uploadControl("image_url", prize.image_url || "", "奖品图片 URL")}</td>
+        <td>${uploadControl("image_url", prize.image_url || "", "上传奖品图片")}</td>
         <td>
           <select class="select" data-field="type">
             <option value="thanks" ${prize.type === "thanks" ? "selected" : ""}>谢谢参与</option>
@@ -827,7 +855,7 @@ function renderCampaignRows(type, rows = []) {
   if (type === "ranking") {
     $("#campaign-ranking-rows").innerHTML = safeRows.map(item => `
       <tr data-row-type="ranking">
-        <td>${uploadControl("avatar", item.avatar || "", "头像图片 URL")}</td>
+        <td>${uploadControl("avatar", item.avatar || "", "上传头像图片")}</td>
         <td><input class="input" data-field="nickname" value="${escapeAttr(item.nickname || "")}" placeholder="用户昵称" /></td>
         <td><input class="input" data-field="invite_count" type="number" min="0" step="1" value="${Number(item.invite_count || 0)}" /></td>
         <td><input class="input" data-field="reward_amount" type="number" min="0" step="0.01" value="${Number(item.reward_amount || 0)}" /></td>
@@ -860,7 +888,7 @@ function renderCampaignRows(type, rows = []) {
   if (type === "poster") {
     $("#campaign-poster-rows").innerHTML = safeRows.map(item => `
       <tr data-row-type="poster">
-        <td>${uploadControl("image_url", item.image_url || "", "海报图片 URL")}</td>
+        <td>${uploadControl("image_url", item.image_url || "", "上传海报图片")}</td>
         <td><input class="input" data-field="text" value="${escapeAttr(item.text || item.title || "")}" placeholder="你不来，活动可不等你！" /></td>
         <td><button class="btn secondary compact" type="button" data-remove-campaign-row>删除</button></td>
       </tr>
@@ -1197,7 +1225,7 @@ async function patchCampaign(id, action) {
 async function addQrcode(campaignId) {
   const name = prompt("引流码名称", "个人微信码");
   if (!name) return;
-  const image_url = await uploadOrPromptUrl("二维码图片 URL", "image");
+  const image_url = await uploadOrPromptUrl("粘贴二维码图片链接", "image");
   if (!image_url) return;
   await api(`/api/admin/acquisition/campaigns/${campaignId}/qrcodes`, {
     method: "POST",
@@ -1215,7 +1243,7 @@ async function addQrcode(campaignId) {
 
 async function addMaterial() {
   const type = prompt("素材类型：qrcode_bg / share_poster / share_cover", "share_cover") || "share_cover";
-  const image_url = await uploadOrPromptUrl("素材图片 URL", "image");
+  const image_url = await uploadOrPromptUrl("粘贴素材图片链接", "image");
   if (!image_url) return;
   adminState.materials = await api("/api/admin/acquisition/materials", {
     method: "POST",
