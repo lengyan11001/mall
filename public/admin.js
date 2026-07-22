@@ -128,19 +128,39 @@ function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.onerror = () => reject(new Error("文件读取失败"));
     reader.readAsDataURL(file);
   });
 }
 
-async function uploadImageFile(file) {
+function uploadAccept(kind = "image") {
+  return kind === "audio"
+    ? "audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/ogg,audio/mp4,audio/x-m4a"
+    : "image/png,image/jpeg,image/webp,image/gif";
+}
+
+function validateUploadFile(file, kind = "image") {
   if (!file) return null;
+  if (kind === "audio") {
+    if (!/^audio\/(mpeg|mp3|wav|x-wav|ogg|mp4|x-m4a)$/.test(file.type || "")) {
+      throw new Error("只支持 MP3、WAV、OGG、M4A 音频");
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      throw new Error("音频不能超过 20MB");
+    }
+    return file;
+  }
   if (!/^image\/(png|jpe?g|webp|gif)$/.test(file.type || "")) {
     throw new Error("只支持 PNG、JPG、WebP、GIF 图片");
   }
   if (file.size > 5 * 1024 * 1024) {
     throw new Error("图片不能超过 5MB");
   }
+  return file;
+}
+
+async function uploadAdminFile(file, kind = "image") {
+  validateUploadFile(file, kind);
   const dataUrl = await readFileAsDataUrl(file);
   return api("/api/admin/uploads", {
     method: "POST",
@@ -152,33 +172,90 @@ async function uploadImageFile(file) {
   });
 }
 
-function renderImageUrlPreview(inputSelector, previewSelector) {
-  const input = $(inputSelector);
-  const preview = $(previewSelector);
+function pickAndUploadFile(kind = "image") {
+  return new Promise((resolve, reject) => {
+    const picker = document.createElement("input");
+    picker.type = "file";
+    picker.accept = uploadAccept(kind);
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    picker.addEventListener("change", async () => {
+      const file = picker.files && picker.files[0];
+      if (!file) {
+        finish(null);
+        return;
+      }
+      try {
+        finish(await uploadAdminFile(file, kind));
+      } catch (error) {
+        reject(error);
+      }
+    }, { once: true });
+    picker.addEventListener("cancel", () => finish(null), { once: true });
+    picker.click();
+  });
+}
+
+async function uploadOrPromptUrl(promptTitle, kind = "image") {
+  const uploaded = await pickAndUploadFile(kind);
+  if (uploaded && uploaded.url) {
+    toast(kind === "audio" ? "音频已上传" : "图片已上传");
+    return uploaded.url;
+  }
+  return prompt(promptTitle, "") || "";
+}
+
+function renderImagePreview(input, preview) {
   if (!input || !preview) return;
   const url = input.value.trim();
   preview.innerHTML = url ? `<img src="${escapeAttr(url)}" alt="图片预览" />` : "";
 }
 
-function chooseAndUploadImage(button) {
+function renderImageUrlPreview(inputSelector, previewSelector) {
+  renderImagePreview($(inputSelector), $(previewSelector));
+}
+
+function uploadControl(field, value = "", placeholder = "图片 URL", kind = "image") {
+  const accept = uploadAccept(kind);
+  const label = kind === "audio" ? "上传音频" : "上传图片";
+  const preview = kind === "image" && value ? `<img src="${escapeAttr(value)}" alt="图片预览" />` : "";
+  return `
+    <div class="table-upload-cell">
+      <div class="image-upload-row">
+        <input class="input" data-field="${field}" value="${escapeAttr(value || "")}" placeholder="${escapeAttr(placeholder)}" />
+        <button class="btn ghost compact" type="button" data-upload-field="${field}" data-upload-kind="${kind}" data-upload-accept="${accept}">${label}</button>
+      </div>
+      ${kind === "image" ? `<div class="image-url-preview">${preview}</div>` : ""}
+    </div>`;
+}
+
+function chooseAndUploadFile(button) {
   const targetSelector = button.dataset.uploadTarget;
   const previewSelector = button.dataset.previewTarget;
-  const input = $(targetSelector);
+  const kind = button.dataset.uploadKind || "image";
+  const inline = button.closest(".table-upload-cell") || button.closest(".field");
+  const input = targetSelector ? $(targetSelector) : inline?.querySelector("input");
   if (!input) return;
   const picker = document.createElement("input");
   picker.type = "file";
-  picker.accept = "image/png,image/jpeg,image/webp,image/gif";
+  picker.accept = button.dataset.uploadAccept || uploadAccept(kind);
   picker.addEventListener("change", async () => {
     const file = picker.files && picker.files[0];
     if (!file) return;
-    const originalText = button.textContent;
+    const originalText = button.textContent || button.dataset.uploadLabel || (kind === "audio" ? "上传音频" : "上传图片");
     button.disabled = true;
     button.textContent = "上传中";
     try {
-      const uploaded = await uploadImageFile(file);
+      const uploaded = await uploadAdminFile(file, kind);
       input.value = uploaded.url;
-      renderImageUrlPreview(targetSelector, previewSelector);
-      toast("图片已上传");
+      const preview = previewSelector ? $(previewSelector) : inline?.querySelector(".image-url-preview");
+      if (kind === "image") renderImagePreview(input, preview);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      toast(kind === "audio" ? "音频已上传" : "图片已上传");
     } catch (error) {
       toast(error.message);
     } finally {
@@ -729,7 +806,7 @@ function renderCampaignRows(type, rows = []) {
     $("#campaign-lottery-prize-rows").innerHTML = list.map(prize => `
       <tr data-row-type="lottery-prize">
         <td><input class="input" data-field="name" value="${escapeAttr(prize.name || "")}" placeholder="谢谢参与" /></td>
-        <td><input class="input" data-field="image_url" value="${escapeAttr(prize.image_url || "")}" placeholder="奖品图片 URL" /></td>
+        <td>${uploadControl("image_url", prize.image_url || "", "奖品图片 URL")}</td>
         <td>
           <select class="select" data-field="type">
             <option value="thanks" ${prize.type === "thanks" ? "selected" : ""}>谢谢参与</option>
@@ -750,7 +827,7 @@ function renderCampaignRows(type, rows = []) {
   if (type === "ranking") {
     $("#campaign-ranking-rows").innerHTML = safeRows.map(item => `
       <tr data-row-type="ranking">
-        <td><input class="input" data-field="avatar" value="${escapeAttr(item.avatar || "")}" placeholder="头像图片 URL" /></td>
+        <td>${uploadControl("avatar", item.avatar || "", "头像图片 URL")}</td>
         <td><input class="input" data-field="nickname" value="${escapeAttr(item.nickname || "")}" placeholder="用户昵称" /></td>
         <td><input class="input" data-field="invite_count" type="number" min="0" step="1" value="${Number(item.invite_count || 0)}" /></td>
         <td><input class="input" data-field="reward_amount" type="number" min="0" step="0.01" value="${Number(item.reward_amount || 0)}" /></td>
@@ -783,7 +860,7 @@ function renderCampaignRows(type, rows = []) {
   if (type === "poster") {
     $("#campaign-poster-rows").innerHTML = safeRows.map(item => `
       <tr data-row-type="poster">
-        <td><input class="input" data-field="image_url" value="${escapeAttr(item.image_url || "")}" placeholder="海报图片 URL" /></td>
+        <td>${uploadControl("image_url", item.image_url || "", "海报图片 URL")}</td>
         <td><input class="input" data-field="text" value="${escapeAttr(item.text || item.title || "")}" placeholder="你不来，活动可不等你！" /></td>
         <td><button class="btn secondary compact" type="button" data-remove-campaign-row>删除</button></td>
       </tr>
@@ -1009,8 +1086,10 @@ function openCampaignEditor(campaign = null) {
   renderCampaignRows("ranking", campaign?.virtual_rankings || []);
   $("#campaign-background-music").value = campaign?.background_music || "";
   $("#campaign-service-qrcode").value = campaign?.customer_service_qrcode || "";
+  renderImageUrlPreview("#campaign-service-qrcode", "#campaign-service-qrcode-preview");
   renderCampaignRows("form-field", campaign?.form_schema || []);
   $("#campaign-share-cover").value = campaign?.share_cover || campaign?.product?.images?.[0] || "";
+  renderImageUrlPreview("#campaign-share-cover", "#campaign-share-cover-preview");
   $("#campaign-share-description").value = campaign?.share_description || "";
   $("#campaign-share-timeline").value = campaign?.share_timeline_text || "";
   renderCampaignRows("poster", campaign?.poster_config || []);
@@ -1118,7 +1197,8 @@ async function patchCampaign(id, action) {
 async function addQrcode(campaignId) {
   const name = prompt("引流码名称", "个人微信码");
   if (!name) return;
-  const image_url = prompt("二维码图片 URL", "");
+  const image_url = await uploadOrPromptUrl("二维码图片 URL", "image");
+  if (!image_url) return;
   await api(`/api/admin/acquisition/campaigns/${campaignId}/qrcodes`, {
     method: "POST",
     body: JSON.stringify({
@@ -1134,9 +1214,9 @@ async function addQrcode(campaignId) {
 }
 
 async function addMaterial() {
-  const image_url = prompt("素材图片 URL", "");
-  if (!image_url) return;
   const type = prompt("素材类型：qrcode_bg / share_poster / share_cover", "share_cover") || "share_cover";
+  const image_url = await uploadOrPromptUrl("素材图片 URL", "image");
+  if (!image_url) return;
   adminState.materials = await api("/api/admin/acquisition/materials", {
     method: "POST",
     body: JSON.stringify({ type, image_url, sort_order: 0 })
@@ -1246,7 +1326,7 @@ function bindEvents() {
     button.addEventListener("click", () => addCampaignRow(button.dataset.addCampaignRow));
   });
   $$("[data-upload-target]").forEach(button => {
-    button.addEventListener("click", () => chooseAndUploadImage(button));
+    button.addEventListener("click", () => chooseAndUploadFile(button));
     const target = $(button.dataset.uploadTarget);
     if (target && button.dataset.previewTarget) {
       target.addEventListener("input", () => renderImageUrlPreview(button.dataset.uploadTarget, button.dataset.previewTarget));
@@ -1294,6 +1374,10 @@ function bindEvents() {
     if (removeCampaignRow) {
       removeCampaignRow.closest("tr")?.remove();
     }
+    const uploadField = event.target.closest("[data-upload-field]");
+    if (uploadField) {
+      chooseAndUploadFile(uploadField);
+    }
     const qrcode = event.target.closest("[data-add-qrcode]");
     if (qrcode) {
       addQrcode(Number(qrcode.dataset.addQrcode)).catch(error => toast(error.message));
@@ -1317,6 +1401,12 @@ function bindEvents() {
     const withdrawal = event.target.closest("[data-withdrawal]");
     if (withdrawal) {
       patchWithdrawal(Number(withdrawal.dataset.withdrawal), withdrawal.dataset.action).catch(error => toast(error.message));
+    }
+  });
+  document.addEventListener("input", event => {
+    const uploadInput = event.target.closest(".table-upload-cell input");
+    if (uploadInput) {
+      renderImagePreview(uploadInput, uploadInput.closest(".table-upload-cell")?.querySelector(".image-url-preview"));
     }
   });
 }

@@ -59,47 +59,69 @@ function readBody(req, maxBytes = 1024 * 1024) {
 
 async function saveAdminUpload(body = {}, appid = "") {
   const raw = String(body.data_url || body.data || "");
-  const match = raw.match(/^data:(image\/(?:png|jpeg|jpg|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)$/);
+  const match = raw.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)$/i);
   if (!match) {
-    const error = new Error("只支持上传 PNG、JPG、WebP、GIF 图片");
+    const error = new Error("上传文件格式不正确");
     error.statusCode = 422;
     throw error;
   }
-  const mime = match[1].replace("image/jpg", "image/jpeg");
+  const mime = match[1].toLowerCase().replace("image/jpg", "image/jpeg");
+  const allowed = {
+    "image/png": { ext: ".png", max: 5 * 1024 * 1024, type: "image" },
+    "image/jpeg": { ext: ".jpg", max: 5 * 1024 * 1024, type: "image" },
+    "image/webp": { ext: ".webp", max: 5 * 1024 * 1024, type: "image" },
+    "image/gif": { ext: ".gif", max: 5 * 1024 * 1024, type: "image" },
+    "audio/mpeg": { ext: ".mp3", max: 20 * 1024 * 1024, type: "audio" },
+    "audio/mp3": { ext: ".mp3", max: 20 * 1024 * 1024, type: "audio" },
+    "audio/wav": { ext: ".wav", max: 20 * 1024 * 1024, type: "audio" },
+    "audio/x-wav": { ext: ".wav", max: 20 * 1024 * 1024, type: "audio" },
+    "audio/ogg": { ext: ".ogg", max: 20 * 1024 * 1024, type: "audio" },
+    "audio/mp4": { ext: ".m4a", max: 20 * 1024 * 1024, type: "audio" },
+    "audio/x-m4a": { ext: ".m4a", max: 20 * 1024 * 1024, type: "audio" }
+  };
+  const rule = allowed[mime];
+  if (!rule) {
+    const error = new Error("只支持上传 PNG、JPG、WebP、GIF 图片或 MP3、WAV、OGG、M4A 音频");
+    error.statusCode = 422;
+    throw error;
+  }
   const buffer = Buffer.from(match[2].replace(/\s/g, ""), "base64");
-  const maxSize = Number(process.env.ADMIN_UPLOAD_MAX_BYTES || 5 * 1024 * 1024);
+  const maxSize = Number(process.env.ADMIN_UPLOAD_MAX_BYTES || rule.max);
   if (!buffer.length || buffer.length > maxSize) {
-    const error = new Error(`图片大小不能超过 ${Math.floor(maxSize / 1024 / 1024)}MB`);
+    const error = new Error(`文件大小不能超过 ${Math.floor(maxSize / 1024 / 1024)}MB`);
     error.statusCode = 422;
     throw error;
   }
   const signature = buffer.subarray(0, 12).toString("hex");
-  const valid = (
+  const asciiHead = buffer.subarray(0, 12).toString("ascii");
+  const imageValid = (
     mime === "image/png" && signature.startsWith("89504e47") ||
     mime === "image/jpeg" && signature.startsWith("ffd8ff") ||
     mime === "image/webp" && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP" ||
     mime === "image/gif" && buffer.subarray(0, 3).toString("ascii") === "GIF"
   );
+  const audioValid = (
+    ["audio/mpeg", "audio/mp3"].includes(mime) && (signature.startsWith("494433") || signature.startsWith("fffb") || signature.startsWith("fff3") || signature.startsWith("fff2")) ||
+    ["audio/wav", "audio/x-wav"].includes(mime) && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WAVE" ||
+    mime === "audio/ogg" && buffer.subarray(0, 4).toString("ascii") === "OggS" ||
+    ["audio/mp4", "audio/x-m4a"].includes(mime) && asciiHead.includes("ftyp")
+  );
+  const valid = rule.type === "image" ? imageValid : audioValid;
   if (!valid) {
-    const error = new Error("图片内容和格式不匹配");
+    const error = new Error("上传内容和文件格式不匹配");
     error.statusCode = 422;
     throw error;
   }
-  const ext = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/webp": ".webp",
-    "image/gif": ".gif"
-  }[mime];
   const safeAppid = String(appid || "default").replace(/[^a-zA-Z0-9_-]/g, "_");
   const dir = path.join(publicDir, "uploads", safeAppid);
   await fs.promises.mkdir(dir, { recursive: true });
-  const name = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
+  const name = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${rule.ext}`;
   const filePath = path.join(dir, name);
   await fs.promises.writeFile(filePath, buffer);
   return {
     url: `/uploads/${safeAppid}/${name}`,
     mime_type: mime,
+    type: rule.type,
     size: buffer.length
   };
 }
@@ -258,6 +280,10 @@ function serveStatic(req, res, pathname, hostname = "") {
       ".jpeg": "image/jpeg",
       ".webp": "image/webp",
       ".gif": "image/gif",
+      ".mp3": "audio/mpeg",
+      ".wav": "audio/wav",
+      ".ogg": "audio/ogg",
+      ".m4a": "audio/mp4",
       ".svg": "image/svg+xml"
     }[ext] || "application/octet-stream";
     const isAdminAsset = isCmsHost && [".html", ".css", ".js"].includes(ext);
@@ -510,7 +536,8 @@ function createServer({ store }) {
     }
 
     if (req.method === "POST" && pathname === "/api/admin/uploads") {
-      ok(res, await saveAdminUpload(await readBody(req, 8 * 1024 * 1024), req.admin.appid));
+      const uploadBodyLimit = Number(process.env.ADMIN_UPLOAD_BODY_MAX_BYTES || 32 * 1024 * 1024);
+      ok(res, await saveAdminUpload(await readBody(req, uploadBodyLimit), req.admin.appid));
       return;
     }
 

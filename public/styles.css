@@ -348,6 +348,29 @@ a {
   display: block;
 }
 
+.table-upload-cell {
+  min-width: 220px;
+}
+
+.editor-table .table-upload-cell .image-upload-row {
+  grid-template-columns: minmax(140px, 1fr) auto;
+  gap: 6px;
+}
+
+.editor-table .table-upload-cell .btn {
+  min-height: 30px;
+  padding: 0 8px;
+}
+
+.editor-table .table-upload-cell .image-url-preview {
+  margin-top: 5px;
+}
+
+.editor-table .table-upload-cell .image-url-preview img {
+  width: 48px;
+  height: 48px;
+}
+
 .rich-editor {
   border: 1px solid var(--line);
   border-radius: 8px;

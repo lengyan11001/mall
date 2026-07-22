@@ -557,18 +557,29 @@
                   <span>虚拟邀请人数</span>
                   <input class="input" id="campaign-virtual-invite" type="number" min="0" step="1" />
                 </label>
-                <label class="field wide">
-                  <span>背景音乐 URL</span>
-                  <input class="input" id="campaign-background-music" />
-                </label>
-                <label class="field wide">
-                  <span>客服二维码 URL</span>
-                  <input class="input" id="campaign-service-qrcode" />
-                </label>
-                <label class="field wide">
-                  <span>分享封面 URL</span>
-                  <input class="input" id="campaign-share-cover" />
-                </label>
+                <div class="field wide">
+                  <span>背景音乐</span>
+                  <div class="image-upload-row">
+                    <input class="input" id="campaign-background-music" placeholder="上传音频后自动生成 URL，也可以粘贴音频 URL" />
+                    <button class="btn ghost compact" type="button" data-upload-target="#campaign-background-music" data-upload-kind="audio" data-upload-label="上传音频">上传音频</button>
+                  </div>
+                </div>
+                <div class="field wide">
+                  <span>客服二维码</span>
+                  <div class="image-upload-row">
+                    <input class="input" id="campaign-service-qrcode" placeholder="上传图片后自动生成 URL，也可以粘贴图片 URL" />
+                    <button class="btn ghost compact" type="button" data-upload-target="#campaign-service-qrcode" data-preview-target="#campaign-service-qrcode-preview">上传图片</button>
+                  </div>
+                  <div class="image-url-preview" id="campaign-service-qrcode-preview"></div>
+                </div>
+                <div class="field wide">
+                  <span>分享封面</span>
+                  <div class="image-upload-row">
+                    <input class="input" id="campaign-share-cover" placeholder="上传图片后自动生成 URL，也可以粘贴图片 URL" />
+                    <button class="btn ghost compact" type="button" data-upload-target="#campaign-share-cover" data-preview-target="#campaign-share-cover-preview">上传图片</button>
+                  </div>
+                  <div class="image-url-preview" id="campaign-share-cover-preview"></div>
+                </div>
                 <label class="field wide">
                   <span>分享描述</span>
                   <input class="input" id="campaign-share-description" />
