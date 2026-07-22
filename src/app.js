@@ -556,6 +556,10 @@ function createServer({ store }) {
       ok(res, await store.updateProduct(adminProductId, await readBody(req), req.admin.appid));
       return;
     }
+    if (req.method === "DELETE" && adminProductId) {
+      ok(res, await store.deleteProduct(adminProductId, req.admin.appid));
+      return;
+    }
 
     if (req.method === "GET" && pathname === "/api/admin/acquisition/campaigns") {
       ok(res, await store.listAcquisitionCampaigns({
@@ -581,6 +585,12 @@ function createServer({ store }) {
       return;
     }
 
+    const materialId = matchId(pathname, "/api/admin/acquisition/materials/");
+    if (req.method === "DELETE" && materialId) {
+      ok(res, await store.deleteAcquisitionMaterial(materialId, req.admin.appid));
+      return;
+    }
+
     const acquisitionId = matchId(pathname, "/api/admin/acquisition/campaigns/");
     if (acquisitionId) {
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
@@ -593,6 +603,10 @@ function createServer({ store }) {
       }
       if (req.method === "PATCH" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
         ok(res, await store.patchAcquisitionCampaign(acquisitionId, await readBody(req), req.admin.appid));
+        return;
+      }
+      if (req.method === "DELETE" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
+        ok(res, await store.deleteAcquisitionCampaign(acquisitionId, req.admin.appid));
         return;
       }
       if (req.method === "POST" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/qrcodes`) {

@@ -724,6 +724,26 @@ function createStore(pool = createPool()) {
     return publicProduct(product);
   }
 
+  async function deleteProduct(productId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
+    const id = assertId(productId, "商品 ID");
+    return tx(pool, async conn => {
+      const existing = await one(conn, "SELECT id FROM products WHERE id = :id AND appid = :appid FOR UPDATE", { id, appid: scopedAppId });
+      if (!existing) throw appError(404, "商品不存在");
+      const usage = await one(conn, `
+        SELECT
+          (SELECT COUNT(*) FROM acquisition_campaigns WHERE product_id = :id AND appid = :appid) campaign_count,
+          (SELECT COUNT(*) FROM orders WHERE product_id = :id AND appid = :appid) order_count
+      `, { id, appid: scopedAppId });
+      if (Number(usage.campaign_count || 0) || Number(usage.order_count || 0)) {
+        throw appError(409, "商品已经被拓客宝活动或订单引用，不能直接删除，请先处理关联数据");
+      }
+      await conn.query("DELETE FROM products WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
+      const rows = await many(conn, "SELECT * FROM products WHERE appid = :appid ORDER BY id DESC", { appid: scopedAppId });
+      return rows.map(publicProduct);
+    });
+  }
+
   function campaignSelect() {
     return `
       SELECT
@@ -987,6 +1007,27 @@ function createStore(pool = createPool()) {
     });
   }
 
+  async function deleteAcquisitionCampaign(campaignId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
+    const id = assertId(campaignId, "拓客宝活动 ID");
+    return tx(pool, async conn => {
+      const existing = await one(conn, "SELECT id FROM acquisition_campaigns WHERE id = :id AND appid = :appid FOR UPDATE", { id, appid: scopedAppId });
+      if (!existing) throw appError(404, "拓客宝活动不存在");
+      const usage = await one(conn, `
+        SELECT
+          (SELECT COUNT(*) FROM acquisition_orders WHERE campaign_id = :id AND appid = :appid) order_count,
+          (SELECT COUNT(*) FROM acquisition_relations WHERE campaign_id = :id AND appid = :appid) relation_count,
+          (SELECT COUNT(*) FROM acquisition_lottery_records WHERE campaign_id = :id AND appid = :appid) lottery_count
+      `, { id, appid: scopedAppId });
+      if (Number(usage.order_count || 0) || Number(usage.relation_count || 0) || Number(usage.lottery_count || 0)) {
+        throw appError(409, "拓客宝活动已经产生订单、关系链或抽奖记录，不能直接删除，请改为结束活动");
+      }
+      await conn.query("DELETE FROM acquisition_campaigns WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
+      const rows = await many(conn, `${campaignSelect()} WHERE ac.appid = :appid ORDER BY ac.id DESC`, { appid: scopedAppId });
+      return rows.map(campaignRow);
+    });
+  }
+
   async function saveAcquisitionQrcode(campaignId, body, appid = "") {
     const scopedAppId = normalizeAppId(appid || body.appid);
     const campaign = await getAcquisitionCampaign(campaignId, pool, scopedAppId);
@@ -1202,6 +1243,16 @@ function createStore(pool = createPool()) {
         payload
       );
     }
+    return listAcquisitionMaterials(scopedAppId);
+  }
+
+  async function deleteAcquisitionMaterial(materialId, appid = "") {
+    const scopedAppId = normalizeAppId(appid);
+    const id = assertId(materialId, "素材 ID");
+    await pool.query("DELETE FROM acquisition_materials WHERE id = :id AND appid = :appid", {
+      id,
+      appid: scopedAppId
+    });
     return listAcquisitionMaterials(scopedAppId);
   }
 
@@ -2608,11 +2659,13 @@ function createStore(pool = createPool()) {
     listAdminProducts,
     createProduct,
     updateProduct,
+    deleteProduct,
     listAcquisitionCampaigns,
     getAcquisitionCampaign,
     createAcquisitionCampaign,
     updateAcquisitionCampaign,
     patchAcquisitionCampaign,
+    deleteAcquisitionCampaign,
     saveAcquisitionQrcode,
     deleteAcquisitionQrcode,
     listAcquisitionRelations,
@@ -2621,6 +2674,7 @@ function createStore(pool = createPool()) {
     acquisitionDashboard,
     listAcquisitionMaterials,
     saveAcquisitionMaterial,
+    deleteAcquisitionMaterial,
     createOrder,
     syncWechatPayment,
     closeUnpaidOrder,

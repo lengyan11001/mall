@@ -470,6 +470,7 @@ function renderProducts() {
         <div class="row-actions">
           <button class="btn ghost" data-edit-product="${product.id}">${icon("edit")} 编辑</button>
           <button class="btn secondary" data-toggle-product="${product.id}">${product.status === "on" ? "下架" : "上架"}</button>
+          <button class="btn danger" data-delete-product="${product.id}">删除</button>
         </div>
       </td>
     </tr>
@@ -493,6 +494,7 @@ function renderCampaigns() {
           <button class="btn ghost" data-select-campaign="${campaign.id}">${icon("chart")} 查看</button>
           <button class="btn ghost" data-edit-campaign="${campaign.id}">${icon("edit")} 编辑</button>
           <button class="btn secondary" data-campaign-action="${campaign.id}" data-action="${campaign.status === "published" ? "end" : "publish"}">${campaign.status === "published" ? "结束" : "发布"}</button>
+          <button class="btn danger" data-delete-campaign="${campaign.id}">删除</button>
         </div>
       </td>
     </tr>
@@ -534,7 +536,10 @@ function renderCampaignDetail() {
     <article class="list-item">
       <div class="list-item-head"><h3>引流码</h3><button class="btn ghost" data-add-qrcode="${campaign.id}">${icon("plus")} 添加</button></div>
       ${(campaign.qrcodes || []).length ? campaign.qrcodes.map(qrcode => `
-        <p>${qrcode.type_text} · ${qrcode.name} · 已展示 ${qrcode.shown_count}/${qrcode.show_limit || "不限"} · ${qrcode.status_text}</p>
+        <div class="inline-data-row">
+          <span>${qrcode.type_text} · ${qrcode.name} · 已展示 ${qrcode.shown_count}/${qrcode.show_limit || "不限"} · ${qrcode.status_text}</span>
+          <button class="btn secondary compact" type="button" data-delete-qrcode="${qrcode.id}" data-campaign-id="${campaign.id}">删除</button>
+        </div>
       `).join("") : '<p>还没有配置引流码。建议先添加个人码，再添加群码。</p>'}
     </article>
     <article class="list-item">
@@ -558,7 +563,10 @@ function renderMaterials() {
     <article class="list-item">
       <div class="list-item-head">
         <h3>${item.type_text}</h3>
-        <span class="pill">排序 ${item.sort_order}</span>
+        <div class="row-actions">
+          <span class="pill">排序 ${item.sort_order}</span>
+          <button class="btn secondary compact" type="button" data-delete-material="${item.id}">删除</button>
+        </div>
       </div>
       <p>${item.image_url}</p>
     </article>
@@ -727,10 +735,27 @@ function productImages() {
   return $("#product-images").value.split(/\r?\n/).map(item => item.trim()).filter(Boolean);
 }
 
+function setProductImages(images = []) {
+  $("#product-images").value = [...new Set((images || []).map(item => String(item || "").trim()).filter(Boolean))].join("\n");
+  renderProductImagePreview();
+}
+
+async function uploadProductImage() {
+  const uploaded = await pickAndUploadFile("image");
+  if (!uploaded || !uploaded.url) return;
+  setProductImages([...productImages(), uploaded.url]);
+  toast("商品图片已上传");
+}
+
 function renderProductImagePreview() {
   const images = productImages();
   $("#product-image-preview").innerHTML = images.length
-    ? images.map((src, index) => `<img src="${escapeAttr(src)}" alt="商品图 ${index + 1}" />`).join("")
+    ? images.map((src, index) => `
+      <div class="product-image-card">
+        <img src="${escapeAttr(src)}" alt="商品图 ${index + 1}" />
+        <button class="image-delete" type="button" data-remove-product-image="${index}" title="删除图片">删除</button>
+      </div>
+    `).join("")
     : '<div class="empty">图片 URL 每行一张，预览会显示在这里。</div>';
 }
 
@@ -758,6 +783,11 @@ function runRichCommand(command, value = null) {
   $("#product-rich-editor").focus();
   document.execCommand(command, false, value);
   productDetailHtml();
+}
+
+async function insertRichImage() {
+  const url = await uploadOrPromptUrl("图片 URL", "image");
+  if (url) runRichCommand("insertImage", url);
 }
 
 function toggleRichSource() {
@@ -1222,6 +1252,20 @@ async function patchCampaign(id, action) {
   toast(action === "end" ? "活动已结束" : "活动已发布");
 }
 
+async function deleteCampaign(id) {
+  const campaign = adminState.campaigns.find(item => item.id === id);
+  if (!campaign) return;
+  if (!confirm(`确定删除拓客宝活动「${campaign.name}」？已经产生订单或关系链的活动不能删除。`)) return;
+  adminState.campaigns = await api(`/api/admin/acquisition/campaigns/${id}`, {
+    method: "DELETE"
+  });
+  adminState.selectedCampaign = null;
+  adminState.campaignDashboard = null;
+  renderCampaigns();
+  renderCampaignDetail();
+  toast("拓客宝活动已删除");
+}
+
 async function addQrcode(campaignId) {
   const name = prompt("引流码名称", "个人微信码");
   if (!name) return;
@@ -1241,6 +1285,15 @@ async function addQrcode(campaignId) {
   toast("引流码已保存");
 }
 
+async function deleteQrcode(campaignId, qrcodeId) {
+  if (!confirm("确定删除这个引流码？")) return;
+  await api(`/api/admin/acquisition/campaigns/${campaignId}/qrcodes/${qrcodeId}`, {
+    method: "DELETE"
+  });
+  await selectCampaign(campaignId, false);
+  toast("引流码已删除");
+}
+
 async function addMaterial() {
   const type = prompt("素材类型：qrcode_bg / share_poster / share_cover", "share_cover") || "share_cover";
   const image_url = await uploadOrPromptUrl("粘贴素材图片链接", "image");
@@ -1253,6 +1306,15 @@ async function addMaterial() {
   toast("素材已保存");
 }
 
+async function deleteMaterial(id) {
+  if (!confirm("确定删除这个素材模板？")) return;
+  adminState.materials = await api(`/api/admin/acquisition/materials/${id}`, {
+    method: "DELETE"
+  });
+  renderMaterials();
+  toast("素材已删除");
+}
+
 async function toggleProduct(id) {
   const product = adminState.products.find(item => item.id === id);
   if (!product) return;
@@ -1262,6 +1324,17 @@ async function toggleProduct(id) {
   });
   toast(product.status === "on" ? "商品已下架" : "商品已上架");
   await loadProducts();
+}
+
+async function deleteProduct(id) {
+  const product = adminState.products.find(item => item.id === id);
+  if (!product) return;
+  if (!confirm(`确定删除商品「${product.title}」？已经被拓客宝或订单引用的商品不能删除。`)) return;
+  adminState.products = await api(`/api/admin/products/${id}`, {
+    method: "DELETE"
+  });
+  renderProducts();
+  toast("商品已删除");
 }
 
 async function patchOrder(id, action) {
@@ -1332,17 +1405,24 @@ function bindEvents() {
   });
   $$("[data-rich-action]").forEach(button => {
     button.addEventListener("click", () => {
-      if (button.dataset.richAction === "link") {
-        const url = prompt("链接地址", "https://");
-        if (url) runRichCommand("createLink", url);
-      }
-      if (button.dataset.richAction === "image") {
-        const url = prompt("图片 URL", "");
-        if (url) runRichCommand("insertImage", url);
-      }
-      if (button.dataset.richAction === "source") toggleRichSource();
-      if (button.dataset.richAction === "preview") showRichPreview();
+      (async () => {
+        if (button.dataset.richAction === "link") {
+          const url = prompt("链接地址", "https://");
+          if (url) runRichCommand("createLink", url);
+        }
+        if (button.dataset.richAction === "image") {
+          await insertRichImage();
+        }
+        if (button.dataset.richAction === "source") toggleRichSource();
+        if (button.dataset.richAction === "preview") showRichPreview();
+      })().catch(error => toast(error.message));
     });
+  });
+  $("#upload-product-image").addEventListener("click", () => uploadProductImage().catch(error => toast(error.message)));
+  $("#clear-product-images").addEventListener("click", () => {
+    if (!productImages().length) return;
+    if (!confirm("确定清空所有商品图片？")) return;
+    setProductImages([]);
   });
   $("#back-campaign-list").addEventListener("click", showCampaignOverview);
   $("#save-product").addEventListener("click", () => saveProduct().catch(error => toast(error.message)));
@@ -1385,6 +1465,10 @@ function bindEvents() {
     if (toggle) {
       toggleProduct(Number(toggle.dataset.toggleProduct)).catch(error => toast(error.message));
     }
+    const deleteProductButton = event.target.closest("[data-delete-product]");
+    if (deleteProductButton) {
+      deleteProduct(Number(deleteProductButton.dataset.deleteProduct)).catch(error => toast(error.message));
+    }
     const selectCampaignButton = event.target.closest("[data-select-campaign]");
     if (selectCampaignButton) {
       selectCampaign(Number(selectCampaignButton.dataset.selectCampaign)).catch(error => toast(error.message));
@@ -1398,9 +1482,18 @@ function bindEvents() {
     if (campaignAction) {
       patchCampaign(Number(campaignAction.dataset.campaignAction), campaignAction.dataset.action).catch(error => toast(error.message));
     }
+    const deleteCampaignButton = event.target.closest("[data-delete-campaign]");
+    if (deleteCampaignButton) {
+      deleteCampaign(Number(deleteCampaignButton.dataset.deleteCampaign)).catch(error => toast(error.message));
+    }
     const removeCampaignRow = event.target.closest("[data-remove-campaign-row]");
     if (removeCampaignRow) {
       removeCampaignRow.closest("tr")?.remove();
+    }
+    const removeProductImage = event.target.closest("[data-remove-product-image]");
+    if (removeProductImage) {
+      const index = Number(removeProductImage.dataset.removeProductImage);
+      setProductImages(productImages().filter((_, itemIndex) => itemIndex !== index));
     }
     const uploadField = event.target.closest("[data-upload-field]");
     if (uploadField) {
@@ -1409,6 +1502,14 @@ function bindEvents() {
     const qrcode = event.target.closest("[data-add-qrcode]");
     if (qrcode) {
       addQrcode(Number(qrcode.dataset.addQrcode)).catch(error => toast(error.message));
+    }
+    const deleteQrcodeButton = event.target.closest("[data-delete-qrcode]");
+    if (deleteQrcodeButton) {
+      deleteQrcode(Number(deleteQrcodeButton.dataset.campaignId), Number(deleteQrcodeButton.dataset.deleteQrcode)).catch(error => toast(error.message));
+    }
+    const deleteMaterialButton = event.target.closest("[data-delete-material]");
+    if (deleteMaterialButton) {
+      deleteMaterial(Number(deleteMaterialButton.dataset.deleteMaterial)).catch(error => toast(error.message));
     }
     const ship = event.target.closest("[data-ship]");
     if (ship) {
