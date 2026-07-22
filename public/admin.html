@@ -506,10 +506,14 @@
                 <p>设置个人码、群码切换、过期提醒和团队长上传权限。</p>
               </div>
               <div class="form-grid">
-                <label class="field wide">
-                  <span>引流入口图片 URL</span>
-                  <input class="input" id="campaign-qrcode-guide" />
-                </label>
+                <div class="field wide">
+                  <span>引流入口图片</span>
+                  <div class="image-upload-row">
+                    <input class="input" id="campaign-qrcode-guide" placeholder="上传图片后自动生成 URL，也可以粘贴图片 URL" />
+                    <button class="btn ghost compact" type="button" data-upload-target="#campaign-qrcode-guide" data-preview-target="#campaign-qrcode-guide-preview">上传图片</button>
+                  </div>
+                  <div class="image-url-preview" id="campaign-qrcode-guide-preview"></div>
+                </div>
                 <label class="field" style="display:flex; align-items:center; gap:10px;">
                   <input id="campaign-team-qrcode-enabled" type="checkbox" style="width:18px; height:18px;" />
                   <span>允许团队长上传引流码</span>

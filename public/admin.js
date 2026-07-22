@@ -124,6 +124,71 @@ async function api(path, options = {}) {
   return payload.data;
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadImageFile(file) {
+  if (!file) return null;
+  if (!/^image\/(png|jpe?g|webp|gif)$/.test(file.type || "")) {
+    throw new Error("只支持 PNG、JPG、WebP、GIF 图片");
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    throw new Error("图片不能超过 5MB");
+  }
+  const dataUrl = await readFileAsDataUrl(file);
+  return api("/api/admin/uploads", {
+    method: "POST",
+    body: JSON.stringify({
+      file_name: file.name,
+      mime_type: file.type,
+      data_url: dataUrl
+    })
+  });
+}
+
+function renderImageUrlPreview(inputSelector, previewSelector) {
+  const input = $(inputSelector);
+  const preview = $(previewSelector);
+  if (!input || !preview) return;
+  const url = input.value.trim();
+  preview.innerHTML = url ? `<img src="${escapeAttr(url)}" alt="图片预览" />` : "";
+}
+
+function chooseAndUploadImage(button) {
+  const targetSelector = button.dataset.uploadTarget;
+  const previewSelector = button.dataset.previewTarget;
+  const input = $(targetSelector);
+  if (!input) return;
+  const picker = document.createElement("input");
+  picker.type = "file";
+  picker.accept = "image/png,image/jpeg,image/webp,image/gif";
+  picker.addEventListener("change", async () => {
+    const file = picker.files && picker.files[0];
+    if (!file) return;
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "上传中";
+    try {
+      const uploaded = await uploadImageFile(file);
+      input.value = uploaded.url;
+      renderImageUrlPreview(targetSelector, previewSelector);
+      toast("图片已上传");
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }, { once: true });
+  picker.click();
+}
+
 function showAdminLogin() {
   $("#admin-login-layer").classList.add("open");
 }
@@ -930,6 +995,7 @@ function openCampaignEditor(campaign = null) {
   $("#campaign-lottery-desc").value = lotteryConfig.description || "";
   renderCampaignRows("lottery-prize", lotteryConfig.prizes || []);
   $("#campaign-qrcode-guide").value = campaign?.qrcode_guide_image || "";
+  renderImageUrlPreview("#campaign-qrcode-guide", "#campaign-qrcode-guide-preview");
   $("#campaign-team-qrcode-enabled").checked = Boolean(campaign?.team_qrcode_enabled);
   $("#campaign-group-switch-limit").value = trafficConfig.group_switch_limit ?? 180;
   $("#campaign-expire-notify-users").value = (trafficConfig.expire_notify_users || []).join("，");
@@ -1178,6 +1244,13 @@ function bindEvents() {
   });
   $$("[data-add-campaign-row]").forEach(button => {
     button.addEventListener("click", () => addCampaignRow(button.dataset.addCampaignRow));
+  });
+  $$("[data-upload-target]").forEach(button => {
+    button.addEventListener("click", () => chooseAndUploadImage(button));
+    const target = $(button.dataset.uploadTarget);
+    if (target && button.dataset.previewTarget) {
+      target.addEventListener("input", () => renderImageUrlPreview(button.dataset.uploadTarget, button.dataset.previewTarget));
+    }
   });
   $("#campaign-prev-step").addEventListener("click", () => {
     const index = campaignSteps.indexOf(adminState.campaignStep);

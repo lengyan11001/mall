@@ -32,12 +32,12 @@ function fail(res, status, message, details) {
   send(res, status, { ok: false, error: message, details });
 }
 
-function readBody(req) {
+function readBody(req, maxBytes = 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let raw = "";
     req.on("data", chunk => {
       raw += chunk;
-      if (raw.length > 1024 * 1024) {
+      if (raw.length > maxBytes) {
         reject(new Error("请求体过大"));
         req.destroy();
       }
@@ -55,6 +55,53 @@ function readBody(req) {
     });
     req.on("error", reject);
   });
+}
+
+async function saveAdminUpload(body = {}, appid = "") {
+  const raw = String(body.data_url || body.data || "");
+  const match = raw.match(/^data:(image\/(?:png|jpeg|jpg|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)$/);
+  if (!match) {
+    const error = new Error("只支持上传 PNG、JPG、WebP、GIF 图片");
+    error.statusCode = 422;
+    throw error;
+  }
+  const mime = match[1].replace("image/jpg", "image/jpeg");
+  const buffer = Buffer.from(match[2].replace(/\s/g, ""), "base64");
+  const maxSize = Number(process.env.ADMIN_UPLOAD_MAX_BYTES || 5 * 1024 * 1024);
+  if (!buffer.length || buffer.length > maxSize) {
+    const error = new Error(`图片大小不能超过 ${Math.floor(maxSize / 1024 / 1024)}MB`);
+    error.statusCode = 422;
+    throw error;
+  }
+  const signature = buffer.subarray(0, 12).toString("hex");
+  const valid = (
+    mime === "image/png" && signature.startsWith("89504e47") ||
+    mime === "image/jpeg" && signature.startsWith("ffd8ff") ||
+    mime === "image/webp" && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP" ||
+    mime === "image/gif" && buffer.subarray(0, 3).toString("ascii") === "GIF"
+  );
+  if (!valid) {
+    const error = new Error("图片内容和格式不匹配");
+    error.statusCode = 422;
+    throw error;
+  }
+  const ext = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif"
+  }[mime];
+  const safeAppid = String(appid || "default").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const dir = path.join(publicDir, "uploads", safeAppid);
+  await fs.promises.mkdir(dir, { recursive: true });
+  const name = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
+  const filePath = path.join(dir, name);
+  await fs.promises.writeFile(filePath, buffer);
+  return {
+    url: `/uploads/${safeAppid}/${name}`,
+    mime_type: mime,
+    size: buffer.length
+  };
 }
 
 function readRawBody(req) {
@@ -209,6 +256,8 @@ function serveStatic(req, res, pathname, hostname = "") {
       ".png": "image/png",
       ".jpg": "image/jpeg",
       ".jpeg": "image/jpeg",
+      ".webp": "image/webp",
+      ".gif": "image/gif",
       ".svg": "image/svg+xml"
     }[ext] || "application/octet-stream";
     const isAdminAsset = isCmsHost && [".html", ".css", ".js"].includes(ext);
@@ -457,6 +506,11 @@ function createServer({ store }) {
 
     if (req.method === "GET" && pathname === "/api/admin/dashboard") {
       ok(res, await store.dashboard(req.admin.appid));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/admin/uploads") {
+      ok(res, await saveAdminUpload(await readBody(req, 8 * 1024 * 1024), req.admin.appid));
       return;
     }
 

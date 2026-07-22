@@ -131,6 +131,7 @@ a {
   background: var(--brand);
   color: white;
   font-weight: 800;
+  white-space: nowrap;
   box-shadow: 0 10px 22px rgba(15, 159, 110, 0.2);
 }
 
@@ -324,6 +325,27 @@ a {
   min-height: 210px;
   display: grid;
   place-items: center;
+}
+
+.image-upload-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.image-url-preview {
+  min-height: 0;
+}
+
+.image-url-preview img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafc;
+  display: block;
 }
 
 .rich-editor {
