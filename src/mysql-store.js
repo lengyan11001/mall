@@ -2203,11 +2203,19 @@ function createStore(pool = createPool()) {
       await fs.writeFile(paths.qrcodePath, qrcodeBuffer);
     }
 
+    const posterVersion = Date.now();
+    const posterPath = typeof paths.versionedPosterPath === "function"
+      ? paths.versionedPosterPath(posterVersion)
+      : paths.posterPath;
+    const posterUrl = typeof paths.versionedPosterUrl === "function"
+      ? paths.versionedPosterUrl(posterVersion)
+      : `${paths.posterUrl}?v=${posterVersion}`;
+
     await buildInvitePoster({
       campaign,
       user,
       qrcodeBuffer,
-      outputPath: paths.posterPath,
+      outputPath: posterPath,
       brandName: tenant?.name || "非常好裂变"
     });
 
@@ -2218,7 +2226,7 @@ function createStore(pool = createPool()) {
       page: "pages/home/index",
       path: `/pages/home/index?campaign_id=${campaign.id}&scene=${paths.scene}`,
       qrcode_url: paths.qrcodeUrl,
-      poster_url: `${paths.posterUrl}?v=${Date.now()}`,
+      poster_url: posterUrl,
       qr_payload: `campaign:${campaign.id};referrer:${user.id}`
     };
   }

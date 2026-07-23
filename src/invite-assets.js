@@ -49,8 +49,14 @@ function inviteAssetPaths(campaignId, userId) {
     scene,
     qrcodePath: path.join(inviteDir, `${scene}-home-code.png`),
     posterPath: path.join(inviteDir, `${scene}-home-poster.png`),
+    versionedPosterPath(version) {
+      return path.join(inviteDir, `${scene}-home-poster-${version}.png`);
+    },
     qrcodeUrl: `/generated/invite/${scene}-home-code.png`,
-    posterUrl: `/generated/invite/${scene}-home-poster.png`
+    posterUrl: `/generated/invite/${scene}-home-poster.png`,
+    versionedPosterUrl(version) {
+      return `/generated/invite/${scene}-home-poster-${version}.png`;
+    }
   };
 }
 
