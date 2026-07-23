@@ -918,8 +918,8 @@ function renderCampaignRows(type, rows = []) {
   if (type === "poster") {
     $("#campaign-poster-rows").innerHTML = safeRows.map(item => `
       <tr data-row-type="poster">
-        <td>${uploadControl("image_url", item.image_url || "", "上传海报图片")}</td>
-        <td><input class="input" data-field="text" value="${escapeAttr(item.text || item.title || "")}" placeholder="你不来，活动可不等你！" /></td>
+        <td>${uploadControl("image_url", item.image_url || "", "上传海报主视觉")}</td>
+        <td><input class="input" data-field="text" value="${escapeAttr(item.text || item.title || "")}" placeholder="显示在专属邀请海报上的文案" /></td>
         <td><button class="btn secondary compact" type="button" data-remove-campaign-row>删除</button></td>
       </tr>
     `).join("");

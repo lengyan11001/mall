@@ -2218,7 +2218,7 @@ function createStore(pool = createPool()) {
       page: "pages/home/index",
       path: `/pages/home/index?campaign_id=${campaign.id}&scene=${paths.scene}`,
       qrcode_url: paths.qrcodeUrl,
-      poster_url: paths.posterUrl,
+      poster_url: `${paths.posterUrl}?v=${Date.now()}`,
       qr_payload: `campaign:${campaign.id};referrer:${user.id}`
     };
   }

@@ -134,13 +134,26 @@ async function writeQrcode(scene, qrcodeBuffer) {
 
 async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, brandName = "非常好裂变" }) {
   await ensureInviteDir();
+  const product = campaign.product || {};
+  const posterConfig = Array.isArray(campaign.poster_config) ? campaign.poster_config.filter(Boolean) : [];
+  const primaryPoster = posterConfig[0] || {};
   const title = campaign.name || campaign.product?.title || "拓客宝活动";
-  const description = campaign.share_description || campaign.description || campaign.product?.description || "扫码进入小程序，参与活动并领取福利。";
+  const description = primaryPoster.text || campaign.share_description || campaign.description || campaign.product?.description || "扫码进入小程序，参与活动并领取福利。";
   const inviter = user.nickname || `用户${user.id}`;
   const price = Number(campaign.lead_price || 0).toFixed(2);
   const qrcode = qrcodeBuffer.toString("base64");
+  const productImageUrl = Array.isArray(product.images) && product.images.length ? product.images[0] : product.image_url || "";
+  const posterImageData = await imageDataUri(primaryPoster.image_url || campaign.share_cover || productImageUrl);
   const titleLines = svgTextLines(title, 64, 190, { maxChars: 13, maxLines: 2, size: 48, lineHeight: 58, weight: 900, fill: "#111827" });
   const descLines = svgTextLines(description, 64, 345, { maxChars: 20, maxLines: 3, size: 28, lineHeight: 42, weight: 500, fill: "#4b5563" });
+  const posterVisual = posterImageData
+    ? `<image x="64" y="500" width="622" height="360" preserveAspectRatio="xMidYMid slice" href="${escapeXml(posterImageData)}"/>`
+    : `
+      <rect x="64" y="500" width="622" height="360" rx="30" fill="#111827"/>
+      <circle cx="164" cy="612" r="70" fill="#22d3ee" opacity="0.78"/>
+      <circle cx="586" cy="746" r="94" fill="#fb7185" opacity="0.72"/>
+      <path d="M124 768 C222 624 328 827 438 666 C487 593 576 602 630 552" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round" opacity="0.86"/>
+    `;
 
   const svg = `
 <svg width="750" height="1200" viewBox="0 0 750 1200" xmlns="http://www.w3.org/2000/svg">
@@ -167,10 +180,10 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   <rect x="64" y="292" width="170" height="48" rx="24" fill="#fff7ed"/>
   <text x="88" y="325" font-size="28" font-weight="900" fill="#ea580c">¥${escapeXml(price)}</text>
   ${descLines}
-  <rect x="64" y="500" width="622" height="360" rx="30" fill="#111827"/>
-  <circle cx="164" cy="612" r="70" fill="#22d3ee" opacity="0.78"/>
-  <circle cx="586" cy="746" r="94" fill="#fb7185" opacity="0.72"/>
-  <path d="M124 768 C222 624 328 827 438 666 C487 593 576 602 630 552" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round" opacity="0.86"/>
+  <clipPath id="posterClip"><rect x="64" y="500" width="622" height="360" rx="30"/></clipPath>
+  <g clip-path="url(#posterClip)">${posterVisual}</g>
+  <rect x="64" y="500" width="622" height="360" rx="30" fill="none" stroke="#e5e7eb" stroke-width="2"/>
+  <rect x="64" y="500" width="622" height="112" rx="30" fill="#111827" opacity="0.66"/>
   <text x="92" y="565" font-size="34" font-weight="900" fill="#ffffff">潮玩福利进行中</text>
   <text x="92" y="820" font-size="26" font-weight="700" fill="#ffffff" opacity="0.84">扫码进入小程序参与活动</text>
   <rect x="185" y="902" width="380" height="210" rx="28" fill="#f8fafc"/>

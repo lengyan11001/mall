@@ -39,6 +39,34 @@ function bool(value) {
   return Boolean(Number(value || 0));
 }
 
+function publicAssetBase() {
+  return String(
+    process.env.MALL_PUBLIC_BASE_URL ||
+    process.env.PUBLIC_ASSET_BASE_URL ||
+    (process.env.NODE_ENV === "production" ? "https://mall.bhzn.top" : "")
+  ).replace(/\/+$/, "");
+}
+
+function assetUrl(value) {
+  const source = String(value || "").trim();
+  if (!source || /^(https?:|data:)/.test(source)) return source;
+  if (!/^\/(uploads|generated|assets)\//.test(source)) return source;
+  const base = publicAssetBase();
+  return base ? `${base}${source}` : source;
+}
+
+function assetHtml(html = "") {
+  return String(html || "").replace(/(src=["'])(\/(?:uploads|generated|assets)\/[^"']+)(["'])/g, (_, start, source, end) => {
+    return `${start}${assetUrl(source)}${end}`;
+  });
+}
+
+function assetRows(rows) {
+  return Array.isArray(rows)
+    ? rows.map(item => item && typeof item === "object" ? { ...item, image_url: assetUrl(item.image_url) } : item)
+    : [];
+}
+
 function isAddressFormField(field) {
   const source = [
     field && field.key,
@@ -75,6 +103,7 @@ function publicProduct(product) {
   const normalizedImages = Array.isArray(images)
     ? images.filter(Boolean)
     : (product.image_url ? [product.image_url] : []);
+  const imageUrl = assetUrl(product.image_url);
   return {
     ...product,
     appid: product.appid || "",
@@ -96,8 +125,9 @@ function publicProduct(product) {
     delivery_methods: parseJson(product.delivery_methods, ["express"]),
     vip_enabled: bool(product.vip_enabled ?? 1),
     commission_rate: Number(product.commission_rate),
-    images: normalizedImages,
-    detail_html: product.detail_html || "",
+    image_url: imageUrl,
+    images: normalizedImages.map(assetUrl),
+    detail_html: assetHtml(product.detail_html),
     status_text: statusText[product.status] || product.status,
     commission_label: `${Math.round(Number(product.commission_rate || 0) * 100)}%`
   };
@@ -178,16 +208,16 @@ function campaignRow(row) {
     team_reward_level2: money(row.team_reward_level2),
     lottery_enabled: bool(row.lottery_enabled),
     lottery_config: parseJson(row.lottery_config, {}),
-    qrcode_guide_image: row.qrcode_guide_image || "",
+    qrcode_guide_image: assetUrl(row.qrcode_guide_image),
     team_qrcode_enabled: bool(row.team_qrcode_enabled),
     team_qrcode_types: parseJson(row.team_qrcode_types, ["personal", "group"]),
     traffic_config: parseJson(row.traffic_config, {}),
-    share_cover: row.share_cover || "",
+    share_cover: assetUrl(row.share_cover),
     share_description: row.share_description || "",
     share_timeline_text: row.share_timeline_text || "",
-    customer_service_qrcode: row.customer_service_qrcode || "",
-    background_music: row.background_music || "",
-    poster_config: parseJson(row.poster_config, []),
+    customer_service_qrcode: assetUrl(row.customer_service_qrcode),
+    background_music: assetUrl(row.background_music),
+    poster_config: assetRows(parseJson(row.poster_config, [])),
     form_schema: activityFormSchema(row.form_schema),
     virtual_sold_count: Number(row.virtual_sold_count || 0),
     virtual_share_count: Number(row.virtual_share_count || 0),
@@ -212,8 +242,8 @@ function qrcodeRow(row) {
     type: row.type,
     type_text: row.type === "group" ? "群二维码" : "个人二维码",
     name: row.name,
-    image_url: row.image_url || "",
-    poster_bg: row.poster_bg || "",
+    image_url: assetUrl(row.image_url),
+    poster_bg: assetUrl(row.poster_bg),
     poster_position: parseJson(row.poster_position, {}),
     expires_at: row.expires_at,
     show_limit: Number(row.show_limit || 0),
@@ -235,7 +265,7 @@ function materialRow(row) {
     id: row.id,
     type: row.type,
     type_text: typeText[row.type] || row.type,
-    image_url: row.image_url || "",
+    image_url: assetUrl(row.image_url),
     style_config: parseJson(row.style_config, {}),
     sort_order: Number(row.sort_order || 0),
     created_at: row.created_at
