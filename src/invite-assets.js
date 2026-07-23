@@ -182,15 +182,15 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
     ? fitWithin(posterAsset.width, posterAsset.height, visualMaxWidth, visualMaxHeight)
     : { width: visualMaxWidth, height: 360 };
   const visualX = Math.round((750 - visualSize.width) / 2);
-  const visualY = 408;
+  const visualY = 420;
   const visualBottom = visualY + visualSize.height;
   const qrY = visualBottom + 28;
   const qrCardHeight = 188;
   const footerY = qrY + qrCardHeight + 42;
   const svgHeight = Math.max(1040, footerY + 44);
   const cardHeight = svgHeight - 72;
-  const titleLines = svgTextLines(title, 64, 158, { maxChars: 13, maxLines: 2, size: 48, lineHeight: 56, weight: 900, fill: "#111827" });
-  const descLines = svgTextLines(description, 64, 326, { maxChars: 24, maxLines: 2, size: 26, lineHeight: 38, weight: 500, fill: "#4b5563" });
+  const titleLines = svgTextLines(title, 64, 172, { maxChars: 13, maxLines: 2, size: 48, lineHeight: 56, weight: 900, fill: "#111827" });
+  const descLines = svgTextLines(description, 64, 344, { maxChars: 24, maxLines: 2, size: 26, lineHeight: 38, weight: 500, fill: "#4b5563" });
   const inviterLine = svgTextLines(`邀请人：${inviter}`, 268, qrY + 106, { maxChars: 15, maxLines: 1, size: 24, lineHeight: 34, weight: 800, fill: "#4b5563" });
   const posterVisual = hasPosterImage
     ? `<image x="${visualX}" y="${visualY}" width="${visualSize.width}" height="${visualSize.height}" preserveAspectRatio="xMidYMid meet" href="${escapeXml(posterAsset.dataUri)}"/>`
@@ -225,10 +225,9 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   <rect x="36" y="36" width="678" height="${cardHeight}" rx="34" fill="#ffffff" opacity="0.94"/>
   <rect x="64" y="72" width="196" height="52" rx="26" fill="url(#accent)"/>
   <text x="162" y="107" text-anchor="middle" font-size="26" font-weight="900" fill="#ffffff">${escapeXml(brandName)}</text>
-  <text x="64" y="134" font-size="24" font-weight="800" fill="#0f766e">专属邀请海报</text>
   ${titleLines}
-  <rect x="64" y="262" width="170" height="48" rx="24" fill="#fff7ed"/>
-  <text x="88" y="295" font-size="28" font-weight="900" fill="#ea580c">¥${escapeXml(price)}</text>
+  <rect x="64" y="284" width="170" height="48" rx="24" fill="#fff7ed"/>
+  <text x="88" y="317" font-size="28" font-weight="900" fill="#ea580c">¥${escapeXml(price)}</text>
   ${descLines}
   <clipPath id="posterClip"><rect x="${visualX}" y="${visualY}" width="${visualSize.width}" height="${visualSize.height}" rx="30"/></clipPath>
   <g clip-path="url(#posterClip)">${posterVisual}</g>
