@@ -96,31 +96,57 @@ function svgTextLines(value, x, y, options = {}) {
 }
 
 async function imageDataUri(source) {
+  const asset = await imageAsset(source);
+  return asset.dataUri;
+}
+
+async function imageAsset(source) {
   const value = String(source || "").trim();
-  if (!value) return "";
-  if (value.startsWith("data:image/")) return value;
+  if (!value) return { dataUri: "", width: 0, height: 0 };
+  let buffer = null;
+  let type = "image/jpeg";
   try {
+    if (value.startsWith("data:image/")) {
+      const match = value.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) return { dataUri: value, width: 0, height: 0 };
+      type = match[1];
+      buffer = Buffer.from(match[2], "base64");
+    }
     if (/^https?:\/\//.test(value)) {
       const response = await fetch(value);
-      if (!response.ok) return "";
-      const type = response.headers.get("content-type") || "image/jpeg";
-      const buffer = Buffer.from(await response.arrayBuffer());
-      return `data:${type};base64,${buffer.toString("base64")}`;
-    }
-    if (value.startsWith("/")) {
+      if (!response.ok) return { dataUri: "", width: 0, height: 0 };
+      type = response.headers.get("content-type") || "image/jpeg";
+      buffer = Buffer.from(await response.arrayBuffer());
+    } else if (value.startsWith("/")) {
       const normalized = path.normalize(value).replace(/^([/\\])+/, "");
       const filePath = path.join(publicDir, normalized);
       const resolved = path.resolve(filePath);
-      if (!resolved.startsWith(path.resolve(publicDir))) return "";
+      if (!resolved.startsWith(path.resolve(publicDir))) return { dataUri: "", width: 0, height: 0 };
       const ext = path.extname(resolved).toLowerCase();
-      const type = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
-      const buffer = await fs.readFile(resolved);
-      return `data:${type};base64,${buffer.toString("base64")}`;
+      type = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+      buffer = await fs.readFile(resolved);
     }
+    if (!buffer) return { dataUri: "", width: 0, height: 0 };
+    const metadata = await sharp(buffer).metadata();
+    return {
+      dataUri: `data:${type};base64,${buffer.toString("base64")}`,
+      width: Number(metadata.width || 0),
+      height: Number(metadata.height || 0)
+    };
   } catch {
-    return "";
+    return { dataUri: "", width: 0, height: 0 };
   }
-  return "";
+}
+
+function fitWithin(width, height, maxWidth, maxHeight) {
+  const imageWidth = Number(width || 0);
+  const imageHeight = Number(height || 0);
+  if (imageWidth <= 0 || imageHeight <= 0) return { width: maxWidth, height: maxHeight };
+  const scale = Math.min(maxWidth / imageWidth, maxHeight / imageHeight);
+  return {
+    width: Math.max(1, Math.round(imageWidth * scale)),
+    height: Math.max(1, Math.round(imageHeight * scale))
+  };
 }
 
 async function ensureInviteDir() {
@@ -149,24 +175,39 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   const price = Number(campaign.lead_price || 0).toFixed(2);
   const qrcode = qrcodeBuffer.toString("base64");
   const productImageUrl = Array.isArray(product.images) && product.images.length ? product.images[0] : product.image_url || "";
-  const posterImageData = await imageDataUri(primaryPoster.image_url || campaign.share_cover || productImageUrl);
-  const titleLines = svgTextLines(title, 64, 230, { maxChars: 13, maxLines: 2, size: 48, lineHeight: 58, weight: 900, fill: "#111827" });
-  const descLines = svgTextLines(description, 64, 380, { maxChars: 20, maxLines: 3, size: 28, lineHeight: 42, weight: 500, fill: "#4b5563" });
-  const posterVisual = posterImageData
-    ? `<image x="64" y="500" width="622" height="360" preserveAspectRatio="xMidYMid slice" href="${escapeXml(posterImageData)}"/>`
+  const posterAsset = await imageAsset(primaryPoster.image_url || campaign.share_cover || productImageUrl);
+  const hasPosterImage = Boolean(posterAsset.dataUri);
+  const visualMaxWidth = 622;
+  const visualMaxHeight = 622;
+  const visualSize = hasPosterImage
+    ? fitWithin(posterAsset.width, posterAsset.height, visualMaxWidth, visualMaxHeight)
+    : { width: visualMaxWidth, height: 360 };
+  const visualX = Math.round((750 - visualSize.width) / 2);
+  const visualY = 408;
+  const visualBottom = visualY + visualSize.height;
+  const qrY = visualBottom + 28;
+  const qrCardHeight = 188;
+  const footerY = qrY + qrCardHeight + 42;
+  const svgHeight = Math.max(1040, footerY + 44);
+  const cardHeight = svgHeight - 72;
+  const titleLines = svgTextLines(title, 64, 158, { maxChars: 13, maxLines: 2, size: 48, lineHeight: 56, weight: 900, fill: "#111827" });
+  const descLines = svgTextLines(description, 64, 326, { maxChars: 24, maxLines: 2, size: 26, lineHeight: 38, weight: 500, fill: "#4b5563" });
+  const inviterLine = svgTextLines(`邀请人：${inviter}`, 268, qrY + 106, { maxChars: 15, maxLines: 1, size: 24, lineHeight: 34, weight: 800, fill: "#4b5563" });
+  const posterVisual = hasPosterImage
+    ? `<image x="${visualX}" y="${visualY}" width="${visualSize.width}" height="${visualSize.height}" preserveAspectRatio="xMidYMid meet" href="${escapeXml(posterAsset.dataUri)}"/>`
     : `
-      <rect x="64" y="500" width="622" height="360" rx="30" fill="#111827"/>
-      <circle cx="164" cy="612" r="70" fill="#22d3ee" opacity="0.78"/>
-      <circle cx="586" cy="746" r="94" fill="#fb7185" opacity="0.72"/>
-      <path d="M124 768 C222 624 328 827 438 666 C487 593 576 602 630 552" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round" opacity="0.86"/>
+      <rect x="${visualX}" y="${visualY}" width="${visualSize.width}" height="${visualSize.height}" rx="30" fill="#111827"/>
+      <circle cx="${visualX + 100}" cy="${visualY + 112}" r="70" fill="#22d3ee" opacity="0.78"/>
+      <circle cx="${visualX + visualSize.width - 100}" cy="${visualY + visualSize.height - 114}" r="94" fill="#fb7185" opacity="0.72"/>
+      <path d="M${visualX + 60} ${visualY + visualSize.height - 92} C${visualX + 158} ${visualY + 124} ${visualX + 264} ${visualY + visualSize.height - 33} ${visualX + 374} ${visualY + 166} C${visualX + 423} ${visualY + 93} ${visualX + 512} ${visualY + 102} ${visualX + 566} ${visualY + 52}" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round" opacity="0.86"/>
     `;
-  const fallbackVisualText = posterImageData ? "" : `
-    <text x="92" y="565" font-size="34" font-weight="900" fill="#ffffff">潮玩福利进行中</text>
-    <text x="92" y="820" font-size="26" font-weight="700" fill="#ffffff" opacity="0.84">扫码进入小程序参与活动</text>
+  const fallbackVisualText = hasPosterImage ? "" : `
+    <text x="${visualX + 28}" y="${visualY + 65}" font-size="34" font-weight="900" fill="#ffffff">潮玩福利进行中</text>
+    <text x="${visualX + 28}" y="${visualY + visualSize.height - 42}" font-size="26" font-weight="700" fill="#ffffff" opacity="0.84">扫码进入小程序参与活动</text>
   `;
 
   const svg = `
-<svg width="750" height="1200" viewBox="0 0 750 1200" xmlns="http://www.w3.org/2000/svg">
+<svg width="750" height="${svgHeight}" viewBox="0 0 750 ${svgHeight}" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <style>
       text { font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif; }
@@ -181,25 +222,26 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
       <stop offset="1" stop-color="#f97316"/>
     </linearGradient>
   </defs>
-  <rect width="750" height="1200" fill="url(#bg)"/>
-  <rect x="36" y="36" width="678" height="1128" rx="34" fill="#ffffff" opacity="0.94"/>
+  <rect width="750" height="${svgHeight}" fill="url(#bg)"/>
+  <rect x="36" y="36" width="678" height="${cardHeight}" rx="34" fill="#ffffff" opacity="0.94"/>
   <rect x="64" y="72" width="196" height="52" rx="26" fill="url(#accent)"/>
   <text x="162" y="107" text-anchor="middle" font-size="26" font-weight="900" fill="#ffffff">${escapeXml(brandName)}</text>
-  <text x="64" y="156" font-size="28" font-weight="700" fill="#0f766e">专属邀请海报</text>
+  <text x="64" y="134" font-size="24" font-weight="800" fill="#0f766e">专属邀请海报</text>
   ${titleLines}
-  <rect x="64" y="292" width="170" height="48" rx="24" fill="#fff7ed"/>
-  <text x="88" y="325" font-size="28" font-weight="900" fill="#ea580c">¥${escapeXml(price)}</text>
+  <rect x="64" y="262" width="170" height="48" rx="24" fill="#fff7ed"/>
+  <text x="88" y="295" font-size="28" font-weight="900" fill="#ea580c">¥${escapeXml(price)}</text>
   ${descLines}
-  <clipPath id="posterClip"><rect x="64" y="500" width="622" height="360" rx="30"/></clipPath>
+  <clipPath id="posterClip"><rect x="${visualX}" y="${visualY}" width="${visualSize.width}" height="${visualSize.height}" rx="30"/></clipPath>
   <g clip-path="url(#posterClip)">${posterVisual}</g>
-  <rect x="64" y="500" width="622" height="360" rx="30" fill="none" stroke="#e5e7eb" stroke-width="2"/>
+  <rect x="${visualX}" y="${visualY}" width="${visualSize.width}" height="${visualSize.height}" rx="30" fill="none" stroke="#e5e7eb" stroke-width="2"/>
   ${fallbackVisualText}
-  <rect x="185" y="902" width="380" height="210" rx="28" fill="#f8fafc"/>
-  <image x="211" y="922" width="160" height="160" href="data:image/png;base64,${qrcode}"/>
-  <text x="392" y="976" font-size="28" font-weight="900" fill="#111827">扫码参加</text>
-  <text x="392" y="1022" font-size="24" font-weight="800" fill="#4b5563">邀请人：${escapeXml(inviter)}</text>
-  <text x="392" y="1066" font-size="21" font-weight="500" fill="#6b7280">进入后自动记录关系</text>
-  <text x="375" y="1142" text-anchor="middle" font-size="22" font-weight="600" fill="#6b7280">${escapeXml(brandName)} · 裂变增长</text>
+  <rect x="64" y="${qrY}" width="622" height="${qrCardHeight}" rx="28" fill="#f8fafc"/>
+  <rect x="84" y="${qrY + 18}" width="152" height="152" rx="20" fill="#ffffff"/>
+  <image x="92" y="${qrY + 26}" width="136" height="136" href="data:image/png;base64,${qrcode}"/>
+  <text x="268" y="${qrY + 62}" font-size="28" font-weight="900" fill="#111827">扫码参加</text>
+  ${inviterLine}
+  <text x="268" y="${qrY + 148}" font-size="21" font-weight="500" fill="#6b7280">进入后自动记录邀请关系</text>
+  <text x="375" y="${footerY}" text-anchor="middle" font-size="22" font-weight="600" fill="#6b7280">${escapeXml(brandName)} · 裂变增长</text>
 </svg>`;
 
   await sharp(Buffer.from(svg)).png().toFile(outputPath);
