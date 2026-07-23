@@ -144,8 +144,8 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   const qrcode = qrcodeBuffer.toString("base64");
   const productImageUrl = Array.isArray(product.images) && product.images.length ? product.images[0] : product.image_url || "";
   const posterImageData = await imageDataUri(primaryPoster.image_url || campaign.share_cover || productImageUrl);
-  const titleLines = svgTextLines(title, 64, 190, { maxChars: 13, maxLines: 2, size: 48, lineHeight: 58, weight: 900, fill: "#111827" });
-  const descLines = svgTextLines(description, 64, 345, { maxChars: 20, maxLines: 3, size: 28, lineHeight: 42, weight: 500, fill: "#4b5563" });
+  const titleLines = svgTextLines(title, 64, 230, { maxChars: 13, maxLines: 2, size: 48, lineHeight: 58, weight: 900, fill: "#111827" });
+  const descLines = svgTextLines(description, 64, 380, { maxChars: 20, maxLines: 3, size: 28, lineHeight: 42, weight: 500, fill: "#4b5563" });
   const posterVisual = posterImageData
     ? `<image x="64" y="500" width="622" height="360" preserveAspectRatio="xMidYMid slice" href="${escapeXml(posterImageData)}"/>`
     : `
