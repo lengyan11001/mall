@@ -173,7 +173,6 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   const description = primaryPoster.text || campaign.share_description || campaign.description || campaign.product?.description || "扫码进入小程序，参与活动并领取福利。";
   const inviter = user.nickname || `用户${user.id}`;
   const price = Number(campaign.lead_price || 0).toFixed(2);
-  const qrcode = qrcodeBuffer.toString("base64");
   const productImageUrl = Array.isArray(product.images) && product.images.length ? product.images[0] : product.image_url || "";
   const posterAsset = await imageAsset(primaryPoster.image_url || campaign.share_cover || productImageUrl);
   const hasPosterImage = Boolean(posterAsset.dataUri);
@@ -237,14 +236,21 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   ${fallbackVisualText}
   <rect x="64" y="${qrY}" width="622" height="${qrCardHeight}" rx="28" fill="#f8fafc"/>
   <rect x="84" y="${qrY + 18}" width="152" height="152" rx="20" fill="#ffffff"/>
-  <image x="92" y="${qrY + 26}" width="136" height="136" href="data:image/png;base64,${qrcode}"/>
   <text x="268" y="${qrY + 62}" font-size="28" font-weight="900" fill="#111827">扫码参加</text>
   ${inviterLine}
   <text x="268" y="${qrY + 148}" font-size="21" font-weight="500" fill="#6b7280">进入后自动记录邀请关系</text>
   <text x="375" y="${footerY}" text-anchor="middle" font-size="22" font-weight="600" fill="#6b7280">${escapeXml(brandName)} · 裂变增长</text>
 </svg>`;
 
-  await sharp(Buffer.from(svg)).png().toFile(outputPath);
+  const qrcodeLayer = await sharp(qrcodeBuffer)
+    .resize(136, 136, { fit: "contain", background: "#ffffff" })
+    .png()
+    .toBuffer();
+
+  await sharp(Buffer.from(svg))
+    .png()
+    .composite([{ input: qrcodeLayer, left: 92, top: qrY + 26 }])
+    .toFile(outputPath);
 }
 
 async function buildProductPoster({ product, user, qrcodeBuffer, outputPath, complianceName = "Invite", brandName = "非常好裂变" }) {
