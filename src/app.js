@@ -57,7 +57,7 @@ function readBody(req, maxBytes = 1024 * 1024) {
   });
 }
 
-async function saveAdminUpload(body = {}, appid = "") {
+async function saveAdminUpload(body = {}, appid = "", options = {}) {
   const raw = String(body.data_url || body.data || "");
   const match = raw.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)$/i);
   if (!match) {
@@ -80,13 +80,13 @@ async function saveAdminUpload(body = {}, appid = "") {
     "audio/x-m4a": { ext: ".m4a", max: 20 * 1024 * 1024, type: "audio" }
   };
   const rule = allowed[mime];
-  if (!rule) {
-    const error = new Error("只支持上传 PNG、JPG、WebP、GIF 图片或 MP3、WAV、OGG、M4A 音频");
+  if (!rule || (options.imageOnly && rule.type !== "image")) {
+    const error = new Error(options.imageOnly ? "只支持上传 PNG、JPG、WebP、GIF 图片" : "只支持上传 PNG、JPG、WebP、GIF 图片或 MP3、WAV、OGG、M4A 音频");
     error.statusCode = 422;
     throw error;
   }
   const buffer = Buffer.from(match[2].replace(/\s/g, ""), "base64");
-  const maxSize = Number(process.env.ADMIN_UPLOAD_MAX_BYTES || rule.max);
+  const maxSize = Number(options.maxBytes || process.env.ADMIN_UPLOAD_MAX_BYTES || rule.max);
   if (!buffer.length || buffer.length > maxSize) {
     const error = new Error(`文件大小不能超过 ${Math.floor(maxSize / 1024 / 1024)}MB`);
     error.statusCode = 422;
@@ -124,6 +124,10 @@ async function saveAdminUpload(body = {}, appid = "") {
     type: rule.type,
     size: buffer.length
   };
+}
+
+async function saveUserAvatarUpload(body = {}, appid = "") {
+  return saveAdminUpload(body, appid, { imageOnly: true, maxBytes: 5 * 1024 * 1024 });
 }
 
 function readRawBody(req) {
@@ -356,6 +360,22 @@ function createServer({ store }) {
     if (req.method === "GET" && pathname === "/api/me") {
       const tenant = resolveTenantFromRequest(req, searchParams);
       ok(res, await store.getUser(Number(searchParams.get("user_id")), undefined, tenant.appid));
+      return;
+    }
+
+    if (req.method === "PATCH" && pathname === "/api/me/profile") {
+      const body = await readBody(req, 8 * 1024 * 1024);
+      const tenant = resolveTenantFromRequest(req, searchParams, body);
+      let avatar = body.avatar || body.avatar_url || "";
+      if (body.avatar_data_url) {
+        const uploaded = await saveUserAvatarUpload({ data_url: body.avatar_data_url }, tenant.appid);
+        avatar = uploaded.url;
+      }
+      ok(res, await store.updateUserProfile({
+        ...body,
+        avatar,
+        session_token: (req.headers["x-mall-session"] || "").toString()
+      }, tenant.appid));
       return;
     }
 

@@ -561,6 +561,7 @@ function createStore(pool = createPool()) {
       const openid = String(body.openid || "").trim();
       if (!openid) throw appError(422, "missing openid");
       const scene = body.scene || body.parent_id;
+      const hasUserInfo = Boolean(body.userInfo && (body.userInfo.nickName || body.userInfo.avatarUrl));
       const nickname = String(body.userInfo?.nickName || displayNameFromOpenid(openid)).trim().slice(0, 24);
       const avatar = String(body.userInfo?.avatarUrl || avatarFromName(nickname)).trim().slice(0, 255);
       const token = newSessionToken();
@@ -584,8 +585,8 @@ function createStore(pool = createPool()) {
           `UPDATE users
            SET session_token = :token,
                session_key_cipher = :sessionKey,
-               nickname = CASE WHEN nickname = '' THEN :nickname ELSE nickname END,
-               avatar = CASE WHEN avatar = '' THEN :avatar ELSE avatar END
+               nickname = CASE WHEN :hasUserInfo = 1 THEN :nickname WHEN nickname = '' THEN :nickname ELSE nickname END,
+               avatar = CASE WHEN :hasUserInfo = 1 THEN :avatar WHEN avatar = '' THEN :avatar ELSE avatar END
            WHERE id = :id AND appid = :appid`,
           {
             id: user.id,
@@ -593,7 +594,8 @@ function createStore(pool = createPool()) {
             token,
             sessionKey: String(body.sessionKey || ""),
             nickname,
-            avatar
+            avatar,
+            hasUserInfo: hasUserInfo ? 1 : 0
           }
         );
         user = await getUser(user.id, conn, scopedAppId);
@@ -741,6 +743,33 @@ function createStore(pool = createPool()) {
       await conn.query("DELETE FROM products WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
       const rows = await many(conn, "SELECT * FROM products WHERE appid = :appid ORDER BY id DESC", { appid: scopedAppId });
       return rows.map(publicProduct);
+    });
+  }
+
+  async function updateUserProfile(body, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
+    const userId = assertId(body.user_id, "用户 ID");
+    const sessionToken = cleanText(body.session_token, "", 80);
+    if (!sessionToken) throw appError(401, "登录已失效，请重新进入小程序");
+    const nickname = cleanText(body.nickname, "", 24);
+    const avatar = cleanText(body.avatar || body.avatar_url, "", 255);
+    if (!nickname && !avatar) throw appError(422, "请填写昵称或选择头像");
+
+    return tx(pool, async conn => {
+      const user = await one(
+        conn,
+        "SELECT * FROM users WHERE id = :id AND appid = :appid AND session_token = :sessionToken FOR UPDATE",
+        { id: userId, appid: scopedAppId, sessionToken }
+      );
+      if (!user) throw appError(401, "登录已失效，请重新进入小程序");
+      await conn.query(
+        `UPDATE users
+         SET nickname = CASE WHEN :nickname <> '' THEN :nickname ELSE nickname END,
+             avatar = CASE WHEN :avatar <> '' THEN :avatar ELSE avatar END
+         WHERE id = :id AND appid = :appid`,
+        { id: userId, appid: scopedAppId, nickname, avatar }
+      );
+      return getUser(userId, conn, scopedAppId);
     });
   }
 
@@ -2654,6 +2683,7 @@ function createStore(pool = createPool()) {
     verifyAdminLogin,
     login,
     wechatLogin,
+    updateUserProfile,
     getUser,
     listUserAddresses,
     saveUserAddress,
