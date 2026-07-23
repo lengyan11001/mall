@@ -154,6 +154,10 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
       <circle cx="586" cy="746" r="94" fill="#fb7185" opacity="0.72"/>
       <path d="M124 768 C222 624 328 827 438 666 C487 593 576 602 630 552" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round" opacity="0.86"/>
     `;
+  const fallbackVisualText = posterImageData ? "" : `
+    <text x="92" y="565" font-size="34" font-weight="900" fill="#ffffff">潮玩福利进行中</text>
+    <text x="92" y="820" font-size="26" font-weight="700" fill="#ffffff" opacity="0.84">扫码进入小程序参与活动</text>
+  `;
 
   const svg = `
 <svg width="750" height="1200" viewBox="0 0 750 1200" xmlns="http://www.w3.org/2000/svg">
@@ -183,14 +187,12 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   <clipPath id="posterClip"><rect x="64" y="500" width="622" height="360" rx="30"/></clipPath>
   <g clip-path="url(#posterClip)">${posterVisual}</g>
   <rect x="64" y="500" width="622" height="360" rx="30" fill="none" stroke="#e5e7eb" stroke-width="2"/>
-  <rect x="64" y="500" width="622" height="112" rx="30" fill="#111827" opacity="0.66"/>
-  <text x="92" y="565" font-size="34" font-weight="900" fill="#ffffff">潮玩福利进行中</text>
-  <text x="92" y="820" font-size="26" font-weight="700" fill="#ffffff" opacity="0.84">扫码进入小程序参与活动</text>
+  ${fallbackVisualText}
   <rect x="185" y="902" width="380" height="210" rx="28" fill="#f8fafc"/>
   <image x="211" y="922" width="160" height="160" href="data:image/png;base64,${qrcode}"/>
   <text x="392" y="976" font-size="28" font-weight="900" fill="#111827">扫码参加</text>
-  <text x="392" y="1022" font-size="24" font-weight="700" fill="#4b5563">邀请人：${escapeXml(inviter)}</text>
-  <text x="392" y="1064" font-size="22" font-weight="500" fill="#6b7280">进入后自动记录关系</text>
+  <text x="392" y="1022" font-size="24" font-weight="800" fill="#4b5563">邀请人：${escapeXml(inviter)}</text>
+  <text x="392" y="1066" font-size="21" font-weight="500" fill="#6b7280">进入后自动记录关系</text>
   <text x="375" y="1142" text-anchor="middle" font-size="22" font-weight="600" fill="#6b7280">${escapeXml(brandName)} · 裂变增长</text>
 </svg>`;
 
