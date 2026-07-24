@@ -779,7 +779,7 @@ a {
   opacity: 1;
 }
 
-.poster-layout-card {
+.modal-card.poster-layout-card {
   width: min(1180px, calc(100vw - 16px));
   height: min(900px, calc(100vh - 16px));
   max-height: calc(100vh - 16px);
@@ -965,7 +965,7 @@ a {
 }
 
 @media (max-width: 1040px) {
-  .poster-layout-card {
+  .modal-card.poster-layout-card {
     width: calc(100vw - 12px);
     height: calc(100vh - 12px);
   }
@@ -981,7 +981,7 @@ a {
 }
 
 @media (max-width: 620px) {
-  .modal-layer {
+  #poster-layout-modal.modal-layer {
     padding: 6px;
   }
 
