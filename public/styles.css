@@ -3140,3 +3140,171 @@ tr:last-child td {
     font-size: 20px;
   }
 }
+
+/* Public battle screen is a fixed-ratio display board, not a fluid admin grid. */
+.public-screen {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+  padding: 0;
+}
+
+.public-screen .battle-screen {
+  width: min(100vw, calc(100vh * 1.875));
+  height: min(100vh, calc(100vw / 1.875));
+  min-height: 0;
+  aspect-ratio: 15 / 8;
+  padding: 0;
+}
+
+.battle-title {
+  top: 0;
+  width: clamp(420px, 36%, 620px);
+  min-width: 0;
+  height: 10%;
+  padding: 0 34px 10px;
+}
+
+.battle-title h1 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: #ffffff;
+  font-size: clamp(20px, min(3.1vh, 1.65vw), 30px);
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 14px rgba(80, 220, 255, 0.95);
+  white-space: nowrap;
+}
+
+.screen-tools {
+  top: 1.2%;
+  right: 0.8%;
+}
+
+.battle-frame-top {
+  top: 7.7%;
+}
+
+.battle-frame-bottom {
+  bottom: 2.2%;
+}
+
+.battle-layout {
+  position: absolute;
+  top: 13.3%;
+  right: 2%;
+  bottom: 5.6%;
+  left: 2%;
+  display: grid;
+  grid-template-columns: 1fr 1.05fr 1fr;
+  gap: 1.45%;
+  height: auto;
+}
+
+.battle-left,
+.battle-center,
+.battle-right {
+  display: grid;
+  grid-template-rows: 53.5% 43.7%;
+  gap: 2.8%;
+  min-height: 0;
+}
+
+.battle-panel {
+  min-height: 0;
+  padding: min(1.45vh, 13px) min(0.9vw, 14px);
+}
+
+.battle-panel-title {
+  margin-bottom: min(1.1vh, 10px);
+  font-size: clamp(11px, min(1.5vh, 0.82vw), 14px);
+}
+
+.battle-kpi h3 {
+  margin-bottom: min(1.1vh, 10px);
+  overflow: hidden;
+  font-size: clamp(14px, min(2vh, 1.15vw), 20px);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.battle-countdown {
+  gap: 8px;
+  margin-bottom: min(2vh, 16px);
+}
+
+.battle-countdown span {
+  font-size: clamp(14px, min(2.2vh, 1.15vw), 20px);
+}
+
+.battle-countdown strong {
+  min-height: clamp(24px, 3.4vh, 34px);
+  padding: 2px 8px;
+  font-size: clamp(17px, min(3.2vh, 1.5vw), 26px);
+}
+
+.battle-kpi-grid {
+  grid-template-columns: 1fr 28% 1fr;
+  gap: 3.8%;
+}
+
+.battle-stats {
+  gap: min(2.2vh, 17px);
+}
+
+.battle-stats div {
+  gap: 8px;
+  padding-bottom: min(1.1vh, 8px);
+  font-size: clamp(11px, min(1.45vh, 0.78vw), 13px);
+}
+
+.battle-orbit {
+  width: min(8.9vw, 16.5vh);
+  height: min(8.9vw, 16.5vh);
+}
+
+.battle-orbit strong {
+  width: min(4.5vw, 8.2vh);
+  height: min(4.5vw, 8.2vh);
+  font-size: clamp(25px, min(5vh, 2.8vw), 46px);
+}
+
+.battle-table-head,
+.battle-table-row {
+  min-height: min(3.9vh, 34px);
+  padding: 0 min(0.65vw, 10px);
+  font-size: clamp(10px, min(1.35vh, 0.68vw), 12px);
+}
+
+.battle-rank-row {
+  min-height: min(3.9vh, 34px);
+  padding: 0 min(0.75vw, 12px);
+  font-size: clamp(10px, min(1.5vh, 0.72vw), 13px);
+}
+
+.battle-bars {
+  height: calc(100% - min(3vh, 24px));
+  gap: min(1.7vh, 12px);
+}
+
+.battle-bar-row {
+  font-size: clamp(10px, min(1.4vh, 0.72vw), 13px);
+}
+
+@media (max-aspect-ratio: 15 / 8) {
+  .battle-title h1 {
+    font-size: clamp(20px, 3.15vh, 30px);
+  }
+
+  .battle-orbit {
+    width: min(15.2vh, 8.9vw);
+    height: min(15.2vh, 8.9vw);
+  }
+}
