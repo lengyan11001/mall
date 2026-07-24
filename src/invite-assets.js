@@ -7,6 +7,16 @@ const publicDir = path.join(__dirname, "..", "public");
 const inviteDir = path.join(publicDir, "generated", "invite");
 const productDir = path.join(publicDir, "generated", "product");
 
+function normalizeAssetEnvVersion(value) {
+  const envVersion = String(value || "release").trim();
+  return ["release", "trial", "develop"].includes(envVersion) ? envVersion : "release";
+}
+
+function assetEnvSuffix(value) {
+  const envVersion = normalizeAssetEnvVersion(value);
+  return envVersion === "release" ? "" : `-${envVersion}`;
+}
+
 function campaignInviteScene(campaignId, userId) {
   const campaign = Number(campaignId);
   const user = Number(userId);
@@ -43,31 +53,33 @@ function parseProductInviteScene(scene) {
   };
 }
 
-function inviteAssetPaths(campaignId, userId) {
+function inviteAssetPaths(campaignId, userId, envVersion = "release") {
   const scene = campaignInviteScene(campaignId, userId);
+  const suffix = assetEnvSuffix(envVersion);
   return {
     scene,
-    qrcodePath: path.join(inviteDir, `${scene}-home-code.png`),
-    posterPath: path.join(inviteDir, `${scene}-home-poster.png`),
+    qrcodePath: path.join(inviteDir, `${scene}-home-code${suffix}.png`),
+    posterPath: path.join(inviteDir, `${scene}-home-poster${suffix}.png`),
     versionedPosterPath(version) {
-      return path.join(inviteDir, `${scene}-home-poster-${version}.png`);
+      return path.join(inviteDir, `${scene}-home-poster${suffix}-${version}.png`);
     },
-    qrcodeUrl: `/generated/invite/${scene}-home-code.png`,
-    posterUrl: `/generated/invite/${scene}-home-poster.png`,
+    qrcodeUrl: `/generated/invite/${scene}-home-code${suffix}.png`,
+    posterUrl: `/generated/invite/${scene}-home-poster${suffix}.png`,
     versionedPosterUrl(version) {
-      return `/generated/invite/${scene}-home-poster-${version}.png`;
+      return `/generated/invite/${scene}-home-poster${suffix}-${version}.png`;
     }
   };
 }
 
-function productAssetPaths(productId, userId) {
+function productAssetPaths(productId, userId, envVersion = "release") {
   const scene = productInviteScene(productId, userId);
+  const suffix = assetEnvSuffix(envVersion);
   return {
     scene,
-    qrcodePath: path.join(productDir, `${scene}-code.png`),
-    posterPath: path.join(productDir, `${scene}-poster.png`),
-    qrcodeUrl: `/generated/product/${scene}-code.png`,
-    posterUrl: `/generated/product/${scene}-poster.png`
+    qrcodePath: path.join(productDir, `${scene}-code${suffix}.png`),
+    posterPath: path.join(productDir, `${scene}-poster${suffix}.png`),
+    qrcodeUrl: `/generated/product/${scene}-code${suffix}.png`,
+    posterUrl: `/generated/product/${scene}-poster${suffix}.png`
   };
 }
 
@@ -346,6 +358,7 @@ module.exports = {
   parseCampaignInviteScene,
   productInviteScene,
   parseProductInviteScene,
+  normalizeAssetEnvVersion,
   inviteAssetPaths,
   productAssetPaths,
   ensureInviteDir,

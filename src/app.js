@@ -455,7 +455,8 @@ function createServer({ store }) {
       const tenant = resolveTenantFromRequest(req, searchParams);
       ok(res, await store.campaignInvitePoster({
         campaignId: publicAcquisitionId,
-        userId: Number(searchParams.get("user_id"))
+        userId: Number(searchParams.get("user_id")),
+        envVersion: searchParams.get("env_version") || "release"
       }, tenant));
       return;
     }
@@ -532,7 +533,8 @@ function createServer({ store }) {
       const tenant = resolveTenantFromRequest(req, searchParams);
       ok(res, await store.sharePoster({
         userId: Number(searchParams.get("user_id")),
-        productId: Number(searchParams.get("product_id"))
+        productId: Number(searchParams.get("product_id")),
+        envVersion: searchParams.get("env_version") || "release"
       }, tenant));
       return;
     }

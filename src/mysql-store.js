@@ -14,6 +14,7 @@ const {
   buildInvitePoster,
   buildProductPoster,
   inviteAssetPaths,
+  normalizeAssetEnvVersion,
   parseCampaignInviteScene,
   parseProductInviteScene,
   productAssetPaths
@@ -2165,13 +2166,14 @@ function createStore(pool = createPool()) {
     });
   }
 
-  async function sharePoster({ userId, productId }, tenantOrAppid = "") {
+  async function sharePoster({ userId, productId, envVersion = "release" }, tenantOrAppid = "") {
     const tenant = typeof tenantOrAppid === "object" ? tenantOrAppid : null;
     const scopedAppId = normalizeAppId(tenant?.appid || tenantOrAppid);
+    const qrEnvVersion = normalizeAssetEnvVersion(envVersion);
     const user = await getUser(userId, pool, scopedAppId);
     const product = await getPublicProduct(productId, pool, scopedAppId);
     const appSettings = await settings(pool, scopedAppId);
-    const paths = productAssetPaths(product.id, user.id);
+    const paths = productAssetPaths(product.id, user.id, qrEnvVersion);
     let qrcodeBuffer;
     try {
       qrcodeBuffer = await fs.readFile(paths.qrcodePath);
@@ -2179,7 +2181,8 @@ function createStore(pool = createPool()) {
       qrcodeBuffer = await getUnlimitedQRCode({
         scene: paths.scene,
         page: "pages/product/detail",
-        checkPath: false
+        checkPath: false,
+        envVersion: qrEnvVersion
       }, tenant || { appid: scopedAppId });
       await fs.mkdir(path.dirname(paths.qrcodePath), { recursive: true });
       await fs.writeFile(paths.qrcodePath, qrcodeBuffer);
@@ -2202,14 +2205,16 @@ function createStore(pool = createPool()) {
       path: `/pages/product/detail?id=${product.id}&scene=${paths.scene}`,
       qrcode_url: paths.qrcodeUrl,
       poster_url: paths.posterUrl,
+      env_version: qrEnvVersion,
       qr_payload: `product:${product.id};referrer:${user.id}`,
       compliance_name: appSettings.compliance_name
     };
   }
 
-  async function campaignInvitePoster({ userId, campaignId }, tenantOrAppid = "") {
+  async function campaignInvitePoster({ userId, campaignId, envVersion = "release" }, tenantOrAppid = "") {
     const tenant = typeof tenantOrAppid === "object" ? tenantOrAppid : null;
     const scopedAppId = normalizeAppId(tenant?.appid || tenantOrAppid);
+    const qrEnvVersion = normalizeAssetEnvVersion(envVersion);
     const user = await getUser(userId, pool, scopedAppId);
     const campaign = await getAcquisitionCampaign(campaignId, pool, scopedAppId);
     if (campaign.status !== "published") throw appError(404, "活动未发布");
@@ -2218,7 +2223,7 @@ function createStore(pool = createPool()) {
       throw appError(404, "活动不在有效期内");
     }
 
-    const paths = inviteAssetPaths(campaign.id, user.id);
+    const paths = inviteAssetPaths(campaign.id, user.id, qrEnvVersion);
     let qrcodeBuffer;
     try {
       qrcodeBuffer = await fs.readFile(paths.qrcodePath);
@@ -2226,7 +2231,8 @@ function createStore(pool = createPool()) {
       qrcodeBuffer = await getUnlimitedQRCode({
         scene: paths.scene,
         page: "pages/home/index",
-        checkPath: false
+        checkPath: false,
+        envVersion: qrEnvVersion
       }, tenant || { appid: scopedAppId });
       await fs.mkdir(path.dirname(paths.qrcodePath), { recursive: true });
       await fs.writeFile(paths.qrcodePath, qrcodeBuffer);
@@ -2256,6 +2262,7 @@ function createStore(pool = createPool()) {
       path: `/pages/home/index?campaign_id=${campaign.id}&scene=${paths.scene}`,
       qrcode_url: paths.qrcodeUrl,
       poster_url: posterUrl,
+      env_version: qrEnvVersion,
       qr_payload: `campaign:${campaign.id};referrer:${user.id}`
     };
   }

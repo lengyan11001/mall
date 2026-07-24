@@ -65,7 +65,12 @@ async function getAccessToken(tenant) {
   return data.access_token;
 }
 
-async function getUnlimitedQRCode({ scene, page = "pages/home/index", checkPath = false }, tenant) {
+function normalizeEnvVersion(value) {
+  const envVersion = String(value || "release").trim();
+  return ["release", "trial", "develop"].includes(envVersion) ? envVersion : "release";
+}
+
+async function getUnlimitedQRCode({ scene, page = "pages/home/index", checkPath = false, envVersion = "release" }, tenant) {
   if (!scene) {
     throw appError(422, "Missing mini program QR scene");
   }
@@ -77,14 +82,20 @@ async function getUnlimitedQRCode({ scene, page = "pages/home/index", checkPath 
   const url = new URL("https://api.weixin.qq.com/wxa/getwxacodeunlimit");
   url.searchParams.set("access_token", accessToken);
 
+  const body = {
+    scene: String(scene),
+    page,
+    check_path: Boolean(checkPath)
+  };
+  const normalizedEnvVersion = normalizeEnvVersion(envVersion);
+  if (normalizedEnvVersion !== "release") {
+    body.env_version = normalizedEnvVersion;
+  }
+
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      scene: String(scene),
-      page,
-      check_path: Boolean(checkPath)
-    })
+    body: JSON.stringify(body)
   });
   const buffer = Buffer.from(await response.arrayBuffer());
   const type = response.headers.get("content-type") || "";
@@ -108,5 +119,6 @@ async function getUnlimitedQRCode({ scene, page = "pages/home/index", checkPath 
 module.exports = {
   codeToSession,
   getAccessToken,
+  normalizeEnvVersion,
   getUnlimitedQRCode
 };
