@@ -204,15 +204,15 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   const visualY = 30;
   const visualBottom = visualY + visualSize.height;
   const infoY = visualBottom + 22;
-  const infoHeight = 170;
+  const infoHeight = 290;
   const svgHeight = infoY + infoHeight + 28;
-  const qrSize = 128;
+  const qrSize = 240;
   const qrX = 58;
-  const qrY = infoY + 21;
-  const avatarSize = 76;
-  const avatarX = 238;
-  const avatarY = infoY + 47;
-  const nicknameLines = svgTextLines(inviter, 334, infoY + 95, { maxChars: 12, maxLines: 1, size: 30, lineHeight: 36, weight: 900, fill: "#111827" });
+  const qrY = infoY + 25;
+  const avatarSize = 92;
+  const avatarX = 340;
+  const avatarY = infoY + 91;
+  const nicknameLines = svgTextLines(inviter, 456, infoY + 151, { maxChars: 10, maxLines: 1, size: 34, lineHeight: 40, weight: 900, fill: "#111827" });
   const avatarFallback = avatarAsset.buffer ? "" : `
     <circle cx="${avatarX + avatarSize / 2}" cy="${avatarY + avatarSize / 2}" r="${avatarSize / 2}" fill="#14b8a6"/>
     <text x="${avatarX + avatarSize / 2}" y="${avatarY + 49}" text-anchor="middle" font-size="28" font-weight="900" fill="#ffffff">${escapeXml(avatarInitials(user))}</text>
@@ -243,10 +243,10 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   <rect x="${visualX}" y="${visualY}" width="${visualSize.width}" height="${visualSize.height}" rx="30" fill="none" stroke="#e5e7eb" stroke-width="2"/>
   ${fallbackVisualText}
   <rect x="30" y="${infoY}" width="690" height="${infoHeight}" rx="28" fill="#f8fafc"/>
-  <rect x="${qrX - 12}" y="${qrY - 12}" width="${qrSize + 24}" height="${qrSize + 24}" rx="22" fill="#ffffff"/>
+  <rect x="${qrX - 14}" y="${qrY - 14}" width="${qrSize + 28}" height="${qrSize + 28}" rx="24" fill="#ffffff"/>
   <circle cx="${avatarX + avatarSize / 2}" cy="${avatarY + avatarSize / 2}" r="${avatarSize / 2 + 4}" fill="#ffffff" stroke="#e5e7eb" stroke-width="2"/>
   ${avatarFallback}
-  <text x="334" y="${infoY + 55}" font-size="22" font-weight="700" fill="#64748b">邀请人</text>
+  <text x="456" y="${infoY + 96}" font-size="24" font-weight="700" fill="#64748b">邀请人</text>
   ${nicknameLines}
 </svg>`;
 
