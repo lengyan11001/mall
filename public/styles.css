@@ -3449,3 +3449,92 @@ tr:last-child td {
 .battle-bar-row b {
   height: min(1.5vh, 14px);
 }
+
+/* Final reference pass: six clipped polygon panels inside one lowered frame. */
+.battle-frame {
+  left: 1.2%;
+  right: 1.2%;
+  z-index: 1;
+  border-color: rgba(217, 250, 255, 0.92);
+  filter: drop-shadow(0 0 8px rgba(80, 210, 255, 0.72));
+}
+
+.battle-frame-top {
+  top: 12.2%;
+  border-top-width: 2px;
+}
+
+.battle-frame-bottom {
+  bottom: 5.2%;
+  border-bottom-width: 2px;
+}
+
+.battle-frame::before,
+.battle-frame::after {
+  width: min(5.2vw, 74px);
+  height: min(4.2vh, 34px);
+}
+
+.battle-frame-top::before,
+.battle-frame-top::after,
+.battle-frame-bottom::before,
+.battle-frame-bottom::after {
+  border-width: 3px;
+}
+
+.battle-layout {
+  z-index: 2;
+}
+
+.battle-title {
+  z-index: 4;
+}
+
+.battle-panel {
+  isolation: isolate;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  clip-path: polygon(2.6% 0, 100% 0, 100% 93%, 97.4% 100%, 0 100%, 0 7%);
+}
+
+.battle-panel::before,
+.battle-panel::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  display: block;
+  clip-path: polygon(2.6% 0, 100% 0, 100% 93%, 97.4% 100%, 0 100%, 0 7%);
+}
+
+.battle-panel::before {
+  inset: 0;
+  z-index: 0;
+  background:
+    linear-gradient(135deg, rgba(226, 252, 255, 0.82), rgba(69, 211, 255, 0.3) 31%, rgba(63, 181, 237, 0.2) 75%, rgba(226, 252, 255, 0.8));
+}
+
+.battle-panel::after {
+  inset: 1px;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(33, 190, 255, 0.1), transparent 42%),
+    linear-gradient(180deg, rgba(8, 61, 121, 0.48), rgba(5, 27, 67, 0.26));
+}
+
+.battle-panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.battle-table-head,
+.battle-table-row,
+.battle-rank-row {
+  background: rgba(18, 94, 159, 0.19);
+}
+
+.battle-panel-title {
+  color: #54f9ff;
+}
