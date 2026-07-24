@@ -38,14 +38,6 @@ function countdownLabel(value) {
   return `${String(days).padStart(2, "0")}天${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-function avatarNode(user = {}) {
-  if (user.avatar && /^https?:\/\//.test(user.avatar)) {
-    return `<img src="${escapeHtml(user.avatar)}" alt="${escapeHtml(user.nickname || "用户")}" />`;
-  }
-  const text = Array.from(user.nickname || user.avatar || "访").slice(0, 1).join("") || "访";
-  return `<span>${escapeHtml(text)}</span>`;
-}
-
 function resolveAssetUrl(url) {
   const source = String(url || "").trim();
   if (!source) return "";
@@ -54,6 +46,20 @@ function resolveAssetUrl(url) {
   } catch {
     return source;
   }
+}
+
+function isImageAvatar(value) {
+  const source = String(value || "").trim();
+  return /^(https?:\/\/|data:image\/|\/(?:uploads|generated|assets)\/)/.test(source);
+}
+
+function avatarNode(user = {}) {
+  const avatar = String(user.avatar || user.avatar_url || "").trim();
+  if (isImageAvatar(avatar)) {
+    return `<img src="${escapeHtml(resolveAssetUrl(avatar))}" alt="${escapeHtml(user.nickname || "用户")}" />`;
+  }
+  const text = Array.from(user.nickname || avatar || "访").slice(0, 1).join("") || "访";
+  return `<span>${escapeHtml(text)}</span>`;
 }
 
 async function api(path) {

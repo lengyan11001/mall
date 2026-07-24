@@ -3651,3 +3651,31 @@ tr:last-child td {
 .battle-rank-row {
   grid-template-columns: 30px 26px minmax(0, 1fr) auto;
 }
+
+/* Light reference pass: keep the data panels quiet so the frame and data breathe. */
+.battle-outer-frame {
+  opacity: 0.36;
+}
+
+.battle-panel {
+  border: 1px solid rgba(112, 226, 255, 0.18);
+  background:
+    linear-gradient(180deg, rgba(28, 132, 177, 0.16), rgba(12, 74, 132, 0.08)),
+    radial-gradient(circle at 72% 78%, rgba(186, 242, 255, 0.1), transparent 33%);
+  clip-path: polygon(2.8% 0, 100% 0, 100% 92.5%, 97.2% 100%, 0 100%, 0 7.5%);
+  box-shadow:
+    inset 0 0 0 1px rgba(155, 240, 255, 0.05),
+    inset 0 0 18px rgba(82, 206, 255, 0.08);
+}
+
+.battle-panel::before,
+.battle-panel::after {
+  content: none;
+  display: none;
+}
+
+.battle-table-head,
+.battle-table-row,
+.battle-rank-row {
+  background: rgba(18, 94, 159, 0.1);
+}
