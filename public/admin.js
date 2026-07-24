@@ -1200,7 +1200,7 @@ function renderPosterLayoutStage() {
   nickname.style.maxWidth = `${layout.nickname.width * width}px`;
   nickname.style.fontSize = `${nicknameFont}px`;
   nickname.style.color = layout.nickname.color;
-  nickname.style.textAlign = layout.nickname.align;
+  nickname.style.textAlign = "left";
   nickname.textContent = posterNicknamePreviewText();
   setLayoutSelected(adminState.posterLayoutSelected || "qr");
 }

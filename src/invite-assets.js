@@ -312,7 +312,7 @@ async function buildOverlayInvitePoster({ posterAsset, user, qrcodeBuffer, outpu
   const nicknameBox = compactTextBox(nicknameMaxLeft, nicknameMaxWidth, nicknameTextWidth, normalized.nickname.align, canvasWidth);
   const nicknameText = nicknameLines.map((line, index) => {
     const lineY = nicknameTop + nicknameSize + index * Math.round(nicknameSize * 1.18);
-    return `<text x="${textXForAlign(nicknameBox.left, nicknameBox.width, normalized.nickname.align)}" y="${lineY}" text-anchor="${textAnchor(normalized.nickname.align)}" font-size="${nicknameSize}" font-weight="900" fill="${normalized.nickname.color}" stroke="#000000" stroke-width="${Math.max(1, Math.round(nicknameSize * 0.045))}" paint-order="stroke fill">${escapeXml(line)}</text>`;
+    return `<text x="${nicknameBox.left}" y="${lineY}" text-anchor="start" font-size="${nicknameSize}" font-weight="900" fill="${normalized.nickname.color}" stroke="#000000" stroke-width="${Math.max(1, Math.round(nicknameSize * 0.045))}" paint-order="stroke fill">${escapeXml(line)}</text>`;
   }).join("");
   const avatarFallback = `
     <circle cx="${avatar.left + avatar.size / 2}" cy="${avatar.top + avatar.size / 2}" r="${avatar.size / 2}" fill="#14b8a6"/>
