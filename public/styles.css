@@ -724,6 +724,93 @@ a {
   justify-content: flex-start;
 }
 
+.lottery-prize-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.lottery-prize-table {
+  width: 100%;
+  min-width: 760px;
+}
+
+.lottery-prize-table th,
+.lottery-prize-table td {
+  padding: 5px 4px;
+  vertical-align: top;
+}
+
+.lottery-prize-table th:nth-child(1),
+.lottery-prize-table td:nth-child(1) {
+  width: 16%;
+}
+
+.lottery-prize-table th:nth-child(2),
+.lottery-prize-table td:nth-child(2) {
+  width: 23%;
+}
+
+.lottery-prize-table th:nth-child(3),
+.lottery-prize-table td:nth-child(3) {
+  width: 15%;
+}
+
+.lottery-prize-table th:nth-child(4),
+.lottery-prize-table td:nth-child(4),
+.lottery-prize-table th:nth-child(5),
+.lottery-prize-table td:nth-child(5) {
+  width: 8%;
+}
+
+.lottery-prize-table th:nth-child(6),
+.lottery-prize-table td:nth-child(6) {
+  width: 10%;
+}
+
+.lottery-prize-table th:nth-child(7),
+.lottery-prize-table td:nth-child(7) {
+  width: 11%;
+}
+
+.lottery-prize-table th:nth-child(8),
+.lottery-prize-table td:nth-child(8) {
+  width: 7%;
+}
+
+.lottery-prize-table .table-upload-cell {
+  min-width: 0;
+}
+
+.lottery-prize-table .table-upload-cell .image-upload-row {
+  grid-template-columns: minmax(0, 1fr) 48px;
+  gap: 4px;
+}
+
+.lottery-prize-table .table-upload-cell .input {
+  min-width: 0;
+}
+
+.lottery-prize-table .input,
+.lottery-prize-table .select {
+  padding: 5px 6px;
+}
+
+.lottery-prize-table .table-upload-cell .btn {
+  width: 48px;
+  padding: 0;
+  font-size: 0;
+}
+
+.lottery-prize-table .table-upload-cell .btn::after {
+  content: "上传";
+  font-size: 12px;
+}
+
+.lottery-prize-table [data-remove-campaign-row] {
+  width: 48px;
+  padding: 0;
+}
+
 .input,
 .select,
 .textarea {
