@@ -3538,3 +3538,41 @@ tr:last-child td {
 .battle-panel-title {
   color: #54f9ff;
 }
+
+/* Solid polygon cards: no floating corner pieces, six complete panels. */
+.battle-frame-top {
+  top: 13.2%;
+}
+
+.battle-panel {
+  overflow: hidden;
+  border: 1px solid rgba(112, 219, 255, 0.42);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(11, 68, 130, 0.58), rgba(4, 32, 82, 0.46)),
+    radial-gradient(circle at 50% 18%, rgba(68, 213, 255, 0.14), transparent 46%);
+  clip-path: polygon(3% 0, 100% 0, 100% 92%, 97% 100%, 0 100%, 0 8%);
+  box-shadow:
+    inset 0 0 0 1px rgba(111, 232, 255, 0.12),
+    inset 0 0 28px rgba(56, 181, 255, 0.18);
+}
+
+.battle-panel::before,
+.battle-panel::after {
+  display: none;
+}
+
+.battle-panel-title,
+.battle-kpi h3,
+.battle-countdown,
+.battle-kpi-grid,
+.battle-table,
+.battle-rank,
+.battle-bars {
+  position: relative;
+  z-index: 1;
+}
+
+.battle-panel-title {
+  padding-top: 1px;
+}
