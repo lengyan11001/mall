@@ -865,6 +865,30 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function posterNicknamePreviewText() {
+  return "\u7528\u6237\u6635\u79f0";
+}
+
+function estimatedLayoutTextWidth(value, fontSize) {
+  return Array.from(String(value || "")).reduce((sum, char) => {
+    if (/[\u2e80-\u9fff\uff00-\uffef]/.test(char)) return sum + fontSize;
+    if (/\s/.test(char)) return sum + fontSize * 0.32;
+    return sum + fontSize * 0.62;
+  }, 0);
+}
+
+function compactNicknameWidth(maxWidth, fontSize, text = posterNicknamePreviewText()) {
+  const textWidth = Math.max(fontSize * 1.8, estimatedLayoutTextWidth(text, fontSize) + Math.max(0.01, fontSize * 0.28));
+  return clamp(textWidth, Math.min(maxWidth, fontSize * 1.8), maxWidth);
+}
+
+function legacyNicknameXToLeft(x, width, fontSize, align) {
+  const compactWidth = compactNicknameWidth(width, fontSize);
+  if (align === "right") return x + width - compactWidth;
+  if (align === "center") return x + (width - compactWidth) / 2;
+  return x;
+}
+
 function defaultPosterLayout() {
   return {
     mode: "overlay",
@@ -876,6 +900,14 @@ function defaultPosterLayout() {
 
 function normalizePosterLayout(layout = {}) {
   const defaults = defaultPosterLayout();
+  const sourceNickname = layout.nickname || {};
+  const nicknameWidth = clamp(numberValue(sourceNickname.width, defaults.nickname.width), 0.08, 0.85);
+  const nicknameFontSize = clamp(numberValue(sourceNickname.font_size, defaults.nickname.font_size), 0.016, 0.08);
+  const nicknameAlign = ["left", "center", "right"].includes(sourceNickname.align) ? sourceNickname.align : defaults.nickname.align;
+  const nicknameRawX = numberValue(sourceNickname.x, defaults.nickname.x);
+  const nicknameX = sourceNickname.anchor === "left"
+    ? nicknameRawX
+    : legacyNicknameXToLeft(nicknameRawX, nicknameWidth, nicknameFontSize, nicknameAlign);
   return {
     mode: "overlay",
     qr: {
@@ -889,12 +921,13 @@ function normalizePosterLayout(layout = {}) {
       size: clamp(numberValue(layout.avatar?.size, defaults.avatar.size), 0.04, 0.22)
     },
     nickname: {
-      x: clamp(numberValue(layout.nickname?.x, defaults.nickname.x), -0.85, 0.98),
-      y: clamp(numberValue(layout.nickname?.y, defaults.nickname.y), 0, 0.98),
-      width: clamp(numberValue(layout.nickname?.width, defaults.nickname.width), 0.08, 0.85),
-      font_size: clamp(numberValue(layout.nickname?.font_size, defaults.nickname.font_size), 0.016, 0.08),
-      color: /^#[0-9a-f]{6}$/i.test(String(layout.nickname?.color || "")) ? layout.nickname.color : defaults.nickname.color,
-      align: ["left", "center", "right"].includes(layout.nickname?.align) ? layout.nickname.align : defaults.nickname.align
+      anchor: "left",
+      x: clamp(nicknameX, 0, 0.98),
+      y: clamp(numberValue(sourceNickname.y, defaults.nickname.y), 0, 0.98),
+      width: nicknameWidth,
+      font_size: nicknameFontSize,
+      color: /^#[0-9a-f]{6}$/i.test(String(sourceNickname.color || "")) ? sourceNickname.color : defaults.nickname.color,
+      align: nicknameAlign
     }
   };
 }
@@ -1091,32 +1124,16 @@ function fitPosterLayoutStage() {
   stage.style.width = `${Math.floor(width)}px`;
 }
 
-function posterNicknamePreviewText() {
-  return "\u7528\u6237\u6635\u79f0";
-}
-
-function estimatedLayoutTextWidth(value, fontSize) {
-  return Array.from(String(value || "")).reduce((sum, char) => {
-    if (/[\u2e80-\u9fff\uff00-\uffef]/.test(char)) return sum + fontSize;
-    if (/\s/.test(char)) return sum + fontSize * 0.32;
-    return sum + fontSize * 0.62;
-  }, 0);
-}
-
 function compactNicknameBox(layout, stageWidth, text = posterNicknamePreviewText()) {
   const nickname = layout.nickname || defaultPosterLayout().nickname;
   const maxWidth = Math.max(1, nickname.width * stageWidth);
   const fontSize = Math.max(1, nickname.font_size * stageWidth);
-  const textWidth = Math.max(fontSize * 1.8, estimatedLayoutTextWidth(text, fontSize) + Math.max(8, fontSize * 0.28));
-  const width = clamp(textWidth, Math.min(maxWidth, fontSize * 1.8), maxWidth);
-  let offset = 0;
-  if (nickname.align === "right") offset = maxWidth - width;
-  if (nickname.align === "center") offset = (maxWidth - width) / 2;
-  const left = nickname.x * stageWidth + offset;
+  const width = compactNicknameWidth(maxWidth, fontSize, text);
+  const left = nickname.x * stageWidth;
   return {
     left: clamp(left, 0, Math.max(0, stageWidth - width)),
     width,
-    offset
+    offset: 0
   };
 }
 
@@ -1273,9 +1290,9 @@ function movePosterLayoutDrag(event) {
   const itemHeight = drag.selected === "nickname" ? Math.max(24, (part.font_size || 0.032) * width * 1.2) : (part.size || 0.1) * width;
   const nextX = drag.x + (event.clientX - drag.startX) / width;
   const nextY = drag.y + (event.clientY - drag.startY) / height;
-  const minX = drag.selected === "nickname" ? -(nicknameBox.offset || 0) / width : 0;
+  const minX = 0;
   const maxX = drag.selected === "nickname"
-    ? (width - itemWidth - (nicknameBox.offset || 0)) / width
+    ? (width - itemWidth) / width
     : Math.max(0, 1 - itemWidth / width);
   part.x = clamp(nextX, minX, Math.max(minX, maxX));
   part.y = clamp(nextY, 0, Math.max(0, 1 - itemHeight / height));

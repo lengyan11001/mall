@@ -168,6 +168,26 @@ function clampNumber(value, min, max, fallback) {
   return Math.max(min, Math.min(max, num));
 }
 
+function estimateOverlayTextWidth(value, fontSize) {
+  return Array.from(String(value || "")).reduce((sum, char) => {
+    if (/[\u2e80-\u9fff\uff00-\uffef]/.test(char)) return sum + fontSize;
+    if (/\s/.test(char)) return sum + fontSize * 0.32;
+    return sum + fontSize * 0.62;
+  }, 0);
+}
+
+function compactOverlayNicknameWidth(maxWidth, fontSize, text = "\u7528\u6237\u6635\u79f0") {
+  const textWidth = Math.max(fontSize * 1.8, estimateOverlayTextWidth(text, fontSize) + Math.max(0.01, fontSize * 0.28));
+  return clampNumber(textWidth, Math.min(maxWidth, fontSize * 1.8), maxWidth, maxWidth);
+}
+
+function legacyOverlayNicknameXToLeft(x, width, fontSize, align) {
+  const compactWidth = compactOverlayNicknameWidth(width, fontSize);
+  if (align === "right") return x + width - compactWidth;
+  if (align === "center") return x + (width - compactWidth) / 2;
+  return x;
+}
+
 function defaultOverlayPosterLayout() {
   return {
     mode: "overlay",
@@ -179,6 +199,14 @@ function defaultOverlayPosterLayout() {
 
 function normalizeOverlayPosterLayout(layout = {}) {
   const defaults = defaultOverlayPosterLayout();
+  const sourceNickname = layout.nickname || {};
+  const nicknameWidth = clampNumber(sourceNickname.width, 0.08, 0.85, defaults.nickname.width);
+  const nicknameFontSize = clampNumber(sourceNickname.font_size, 0.016, 0.08, defaults.nickname.font_size);
+  const nicknameAlign = ["left", "center", "right"].includes(sourceNickname.align) ? sourceNickname.align : defaults.nickname.align;
+  const nicknameRawX = Number.isFinite(Number(sourceNickname.x)) ? Number(sourceNickname.x) : defaults.nickname.x;
+  const nicknameX = sourceNickname.anchor === "left"
+    ? nicknameRawX
+    : legacyOverlayNicknameXToLeft(nicknameRawX, nicknameWidth, nicknameFontSize, nicknameAlign);
   return {
     mode: layout.mode === "overlay" ? "overlay" : "",
     qr: {
@@ -192,12 +220,13 @@ function normalizeOverlayPosterLayout(layout = {}) {
       size: clampNumber(layout.avatar?.size, 0.04, 0.22, defaults.avatar.size)
     },
     nickname: {
-      x: clampNumber(layout.nickname?.x, -0.85, 0.98, defaults.nickname.x),
-      y: clampNumber(layout.nickname?.y, 0, 0.98, defaults.nickname.y),
-      width: clampNumber(layout.nickname?.width, 0.08, 0.85, defaults.nickname.width),
-      font_size: clampNumber(layout.nickname?.font_size, 0.016, 0.08, defaults.nickname.font_size),
-      color: /^#[0-9a-f]{6}$/i.test(String(layout.nickname?.color || "")) ? String(layout.nickname.color) : defaults.nickname.color,
-      align: ["left", "center", "right"].includes(layout.nickname?.align) ? layout.nickname.align : defaults.nickname.align
+      anchor: "left",
+      x: clampNumber(nicknameX, 0, 0.98, defaults.nickname.x),
+      y: clampNumber(sourceNickname.y, 0, 0.98, defaults.nickname.y),
+      width: nicknameWidth,
+      font_size: nicknameFontSize,
+      color: /^#[0-9a-f]{6}$/i.test(String(sourceNickname.color || "")) ? String(sourceNickname.color) : defaults.nickname.color,
+      align: nicknameAlign
     }
   };
 }
@@ -233,11 +262,8 @@ function estimatedTextWidth(value, fontSize) {
 
 function compactTextBox(left, maxWidth, textWidth, align, canvasWidth) {
   const width = Math.max(1, Math.min(maxWidth, textWidth));
-  let compactLeft = left;
-  if (align === "right") compactLeft = left + maxWidth - width;
-  if (align === "center") compactLeft = left + (maxWidth - width) / 2;
   return {
-    left: Math.round(Math.max(0, Math.min(compactLeft, canvasWidth - width))),
+    left: Math.round(Math.max(0, Math.min(left, canvasWidth - width))),
     width: Math.round(width)
   };
 }
