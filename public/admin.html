@@ -729,9 +729,67 @@
       </main>
     </div>
 
+    <div class="modal-layer center hidden" id="poster-layout-modal" aria-modal="true" role="dialog">
+      <div class="modal-card poster-layout-card">
+        <div class="modal-body">
+          <div class="drawer-title">
+            <div>
+              <h2 style="margin:0;">海报排版</h2>
+              <p style="margin:6px 0 0; color:var(--muted);">拖动二维码、头像和昵称，保存后生成海报会按此位置叠加。</p>
+            </div>
+            <button class="icon-btn" id="close-poster-layout" title="关闭"></button>
+          </div>
+          <div class="poster-layout-shell">
+            <div class="poster-layout-stage-wrap">
+              <div class="poster-layout-stage" id="poster-layout-stage">
+                <img id="poster-layout-image" alt="海报主视觉" />
+                <div class="poster-layout-item poster-layout-qr" data-layout-item="qr">码</div>
+                <div class="poster-layout-item poster-layout-avatar" data-layout-item="avatar">头像</div>
+                <div class="poster-layout-item poster-layout-nickname" data-layout-item="nickname">用户昵称</div>
+              </div>
+            </div>
+            <div class="poster-layout-controls">
+              <label class="field">
+                <span>当前元素</span>
+                <select class="select" id="poster-layout-selected">
+                  <option value="qr">二维码</option>
+                  <option value="avatar">头像</option>
+                  <option value="nickname">昵称</option>
+                </select>
+              </label>
+              <label class="field">
+                <span id="poster-layout-size-label">大小</span>
+                <input class="input" id="poster-layout-size" type="range" min="1" max="100" value="28" />
+              </label>
+              <label class="field" id="poster-layout-width-field">
+                <span>昵称宽度</span>
+                <input class="input" id="poster-layout-width" type="range" min="8" max="85" value="42" />
+              </label>
+              <label class="field" id="poster-layout-color-field">
+                <span>昵称颜色</span>
+                <input class="input" id="poster-layout-color" type="color" value="#ffffff" />
+              </label>
+              <label class="field" id="poster-layout-align-field">
+                <span>昵称对齐</span>
+                <select class="select" id="poster-layout-align">
+                  <option value="left">左对齐</option>
+                  <option value="center">居中</option>
+                  <option value="right">右对齐</option>
+                </select>
+              </label>
+              <div class="poster-layout-actions">
+                <button class="btn secondary" type="button" id="reset-poster-layout">恢复默认</button>
+                <button class="btn" type="button" id="save-poster-layout">保存排版</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="toast" id="toast"></div>
     <script src="/icons.js?v=20260613-screen1"></script>
-    <script src="/admin.js?v=20260723-poster-product-images"></script>
+    <script src="/admin.js?v=20260724-poster-layout"></script>
   </body>
 </html>
 

@@ -779,6 +779,118 @@ a {
   opacity: 1;
 }
 
+.poster-layout-card {
+  width: min(1120px, calc(100vw - 28px));
+  max-height: 94vh;
+  overflow: auto;
+}
+
+.poster-layout-shell {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) 270px;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.poster-layout-stage-wrap {
+  display: grid;
+  place-items: start center;
+  min-height: 360px;
+  max-height: calc(94vh - 150px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.poster-layout-stage {
+  position: relative;
+  width: min(100%, 560px);
+  user-select: none;
+  touch-action: none;
+}
+
+.poster-layout-stage img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  background: #101828;
+}
+
+.poster-layout-item {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 2px solid #22c55e;
+  background: rgba(255, 255, 255, 0.9);
+  color: #111827;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: move;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.18);
+}
+
+.poster-layout-item.active {
+  border-color: #2f6fed;
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.18), 0 8px 22px rgba(15, 23, 42, 0.18);
+}
+
+.poster-layout-qr {
+  min-width: 52px;
+  min-height: 52px;
+}
+
+.poster-layout-avatar {
+  overflow: hidden;
+  border-radius: 50%;
+  background: #14b8a6;
+  color: #ffffff;
+}
+
+.poster-layout-nickname {
+  display: block;
+  min-width: 70px;
+  min-height: 24px;
+  border-style: dashed;
+  background: rgba(17, 24, 39, 0.18);
+  color: #ffffff;
+  line-height: 1.15;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.72);
+  white-space: nowrap;
+}
+
+.poster-layout-controls {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.poster-layout-controls .input[type="range"] {
+  padding: 0;
+}
+
+.poster-layout-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+@media (max-width: 840px) {
+  .poster-layout-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .poster-layout-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .poster-layout-actions {
+    grid-column: 1 / -1;
+  }
+}
+
 .admin-login-layer {
   position: fixed;
   inset: 0;

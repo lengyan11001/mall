@@ -15,6 +15,10 @@ const adminState = {
   commissions: [],
   withdrawals: [],
   settings: null,
+  posterLayoutRow: null,
+  posterLayout: null,
+  posterLayoutSelected: "qr",
+  posterLayoutDrag: null,
   token: localStorage.getItem("mallAdminToken") || ""
 };
 
@@ -857,6 +861,57 @@ function numberValue(value, fallback = 0) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function defaultPosterLayout() {
+  return {
+    mode: "overlay",
+    qr: { x: 0.38, y: 0.34, size: 0.28 },
+    avatar: { x: 0.86, y: 0.025, size: 0.095 },
+    nickname: { x: 0.42, y: 0.045, width: 0.42, font_size: 0.032, color: "#ffffff", align: "right" }
+  };
+}
+
+function normalizePosterLayout(layout = {}) {
+  const defaults = defaultPosterLayout();
+  return {
+    mode: "overlay",
+    qr: {
+      x: clamp(numberValue(layout.qr?.x, defaults.qr.x), 0, 0.98),
+      y: clamp(numberValue(layout.qr?.y, defaults.qr.y), 0, 0.98),
+      size: clamp(numberValue(layout.qr?.size, defaults.qr.size), 0.08, 0.5)
+    },
+    avatar: {
+      x: clamp(numberValue(layout.avatar?.x, defaults.avatar.x), 0, 0.98),
+      y: clamp(numberValue(layout.avatar?.y, defaults.avatar.y), 0, 0.98),
+      size: clamp(numberValue(layout.avatar?.size, defaults.avatar.size), 0.04, 0.22)
+    },
+    nickname: {
+      x: clamp(numberValue(layout.nickname?.x, defaults.nickname.x), 0, 0.98),
+      y: clamp(numberValue(layout.nickname?.y, defaults.nickname.y), 0, 0.98),
+      width: clamp(numberValue(layout.nickname?.width, defaults.nickname.width), 0.08, 0.85),
+      font_size: clamp(numberValue(layout.nickname?.font_size, defaults.nickname.font_size), 0.016, 0.08),
+      color: /^#[0-9a-f]{6}$/i.test(String(layout.nickname?.color || "")) ? layout.nickname.color : defaults.nickname.color,
+      align: ["left", "center", "right"].includes(layout.nickname?.align) ? layout.nickname.align : defaults.nickname.align
+    }
+  };
+}
+
+function posterLayoutFromInput(input) {
+  try {
+    const value = JSON.parse(input?.value || "{}");
+    return normalizePosterLayout(value);
+  } catch {
+    return defaultPosterLayout();
+  }
+}
+
+function posterLayoutValue(layout) {
+  return JSON.stringify(normalizePosterLayout(layout));
+}
+
 function renderCampaignRows(type, rows = []) {
   const safeRows = Array.isArray(rows) ? rows : [];
   if (type === "lottery-prize") {
@@ -918,7 +973,13 @@ function renderCampaignRows(type, rows = []) {
   if (type === "poster") {
     $("#campaign-poster-rows").innerHTML = safeRows.map(item => `
       <tr data-row-type="poster">
-        <td>${uploadControl("image_url", item.image_url || "", "上传海报主视觉")}</td>
+        <td>
+          ${uploadControl("image_url", item.image_url || "", "上传海报主视觉")}
+          <input type="hidden" data-field="layout" value="${escapeAttr(posterLayoutValue(item.layout || defaultPosterLayout()))}" />
+          <div style="margin-top:6px;">
+            <button class="btn ghost compact" type="button" data-poster-layout>排版</button>
+          </div>
+        </td>
         <td><input class="input" data-field="text" value="${escapeAttr(item.text || item.title || "")}" placeholder="显示在专属邀请海报上的文案" /></td>
         <td><button class="btn secondary compact" type="button" data-remove-campaign-row>删除</button></td>
       </tr>
@@ -931,7 +992,7 @@ function addCampaignRow(type) {
     "lottery-prize": { name: "谢谢参与", type: "thanks", probability: 0.1 },
     ranking: { avatar: "", nickname: "", invite_count: 0, reward_amount: 0 },
     "form-field": { label: "", name: "", type: "text", options: [], required: false },
-    poster: { image_url: "", text: "" }
+    poster: { image_url: "", text: "", layout: defaultPosterLayout() }
   };
   if (!defaults[type]) return;
   renderCampaignRows(type, [...readCampaignRows(type), defaults[type]]);
@@ -983,7 +1044,8 @@ function readCampaignRows(type) {
   if (type === "poster") {
     return $$("#campaign-poster-rows tr").map(row => ({
       image_url: row.querySelector('[data-field="image_url"]').value.trim(),
-      text: row.querySelector('[data-field="text"]').value.trim()
+      text: row.querySelector('[data-field="text"]').value.trim(),
+      layout: posterLayoutFromInput(row.querySelector('[data-field="layout"]'))
     })).filter(item => item.image_url || item.text);
   }
   return [];
@@ -1006,6 +1068,171 @@ function lotteryPrizesForPayload() {
     });
   }
   return prizes.length ? prizes : [{ name: "谢谢参与", type: "thanks", image_url: "", amount: 0, quantity: 0, limit_per_user: 0, probability: 1 }];
+}
+
+function layoutStageSize() {
+  const stage = $("#poster-layout-stage");
+  const image = $("#poster-layout-image");
+  return {
+    width: image.clientWidth || stage.clientWidth || 1,
+    height: image.clientHeight || stage.clientHeight || 1
+  };
+}
+
+function currentLayoutPart() {
+  const selected = adminState.posterLayoutSelected || "qr";
+  return adminState.posterLayout?.[selected] || null;
+}
+
+function setLayoutSelected(selected) {
+  adminState.posterLayoutSelected = selected;
+  $("#poster-layout-selected").value = selected;
+  $$(".poster-layout-item").forEach(item => item.classList.toggle("active", item.dataset.layoutItem === selected));
+  const isNickname = selected === "nickname";
+  $("#poster-layout-size-label").textContent = isNickname ? "字号" : "大小";
+  $("#poster-layout-width-field").classList.toggle("hidden", !isNickname);
+  $("#poster-layout-color-field").classList.toggle("hidden", !isNickname);
+  $("#poster-layout-align-field").classList.toggle("hidden", !isNickname);
+  syncPosterLayoutControls();
+}
+
+function syncPosterLayoutControls() {
+  const layout = adminState.posterLayout || defaultPosterLayout();
+  const selected = adminState.posterLayoutSelected || "qr";
+  if (selected === "nickname") {
+    $("#poster-layout-size").min = 2;
+    $("#poster-layout-size").max = 8;
+    $("#poster-layout-size").value = Math.round((layout.nickname.font_size || 0.032) * 100);
+    $("#poster-layout-width").value = Math.round((layout.nickname.width || 0.42) * 100);
+    $("#poster-layout-color").value = layout.nickname.color || "#ffffff";
+    $("#poster-layout-align").value = layout.nickname.align || "right";
+    return;
+  }
+  $("#poster-layout-size").min = selected === "avatar" ? 4 : 8;
+  $("#poster-layout-size").max = selected === "avatar" ? 22 : 50;
+  $("#poster-layout-size").value = Math.round((layout[selected]?.size || 0.1) * 100);
+}
+
+function renderPosterLayoutStage() {
+  const layout = normalizePosterLayout(adminState.posterLayout || defaultPosterLayout());
+  adminState.posterLayout = layout;
+  const { width, height } = layoutStageSize();
+  const qr = $("#poster-layout-stage [data-layout-item='qr']");
+  const avatar = $("#poster-layout-stage [data-layout-item='avatar']");
+  const nickname = $("#poster-layout-stage [data-layout-item='nickname']");
+  const qrSize = layout.qr.size * width;
+  qr.style.left = `${layout.qr.x * width}px`;
+  qr.style.top = `${layout.qr.y * height}px`;
+  qr.style.width = `${qrSize}px`;
+  qr.style.height = `${qrSize}px`;
+
+  const avatarSize = layout.avatar.size * width;
+  avatar.style.left = `${layout.avatar.x * width}px`;
+  avatar.style.top = `${layout.avatar.y * height}px`;
+  avatar.style.width = `${avatarSize}px`;
+  avatar.style.height = `${avatarSize}px`;
+  avatar.style.fontSize = `${Math.max(10, avatarSize * 0.22)}px`;
+
+  const nicknameWidth = layout.nickname.width * width;
+  const nicknameFont = layout.nickname.font_size * width;
+  nickname.style.left = `${layout.nickname.x * width}px`;
+  nickname.style.top = `${layout.nickname.y * height}px`;
+  nickname.style.width = `${nicknameWidth}px`;
+  nickname.style.fontSize = `${nicknameFont}px`;
+  nickname.style.color = layout.nickname.color;
+  nickname.style.textAlign = layout.nickname.align;
+  nickname.textContent = "用户昵称";
+  setLayoutSelected(adminState.posterLayoutSelected || "qr");
+}
+
+function openPosterLayout(button) {
+  const row = button.closest("tr");
+  const imageInput = row?.querySelector('[data-field="image_url"]');
+  const imageUrl = imageInput?.value.trim();
+  if (!imageUrl) {
+    toast("请先上传海报主视觉");
+    return;
+  }
+  adminState.posterLayoutRow = row;
+  adminState.posterLayout = posterLayoutFromInput(row.querySelector('[data-field="layout"]'));
+  adminState.posterLayoutSelected = "qr";
+  const modal = $("#poster-layout-modal");
+  const image = $("#poster-layout-image");
+  image.src = imageUrl;
+  image.onload = renderPosterLayoutStage;
+  modal.classList.remove("hidden");
+  renderPosterLayoutStage();
+}
+
+function closePosterLayout() {
+  $("#poster-layout-modal").classList.add("hidden");
+  adminState.posterLayoutRow = null;
+  adminState.posterLayoutDrag = null;
+}
+
+function resetPosterLayout() {
+  adminState.posterLayout = defaultPosterLayout();
+  renderPosterLayoutStage();
+}
+
+function savePosterLayout() {
+  const row = adminState.posterLayoutRow;
+  const input = row?.querySelector('[data-field="layout"]');
+  if (!input) return;
+  input.value = posterLayoutValue(adminState.posterLayout || defaultPosterLayout());
+  closePosterLayout();
+  toast("海报排版已保存，请保存活动");
+}
+
+function updatePosterLayoutFromControls() {
+  const selected = adminState.posterLayoutSelected || "qr";
+  const layout = normalizePosterLayout(adminState.posterLayout || defaultPosterLayout());
+  if (selected === "nickname") {
+    layout.nickname.font_size = clamp(numberValue($("#poster-layout-size").value, 3.2) / 100, 0.016, 0.08);
+    layout.nickname.width = clamp(numberValue($("#poster-layout-width").value, 42) / 100, 0.08, 0.85);
+    layout.nickname.color = $("#poster-layout-color").value || "#ffffff";
+    layout.nickname.align = $("#poster-layout-align").value || "right";
+  } else {
+    layout[selected].size = clamp(numberValue($("#poster-layout-size").value, selected === "avatar" ? 9.5 : 28) / 100, selected === "avatar" ? 0.04 : 0.08, selected === "avatar" ? 0.22 : 0.5);
+  }
+  adminState.posterLayout = layout;
+  renderPosterLayoutStage();
+}
+
+function startPosterLayoutDrag(event) {
+  const item = event.target.closest(".poster-layout-item");
+  if (!item) return;
+  const selected = item.dataset.layoutItem;
+  setLayoutSelected(selected);
+  const layoutPart = currentLayoutPart();
+  if (!layoutPart) return;
+  adminState.posterLayoutDrag = {
+    selected,
+    startX: event.clientX,
+    startY: event.clientY,
+    x: layoutPart.x,
+    y: layoutPart.y
+  };
+  item.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+}
+
+function movePosterLayoutDrag(event) {
+  const drag = adminState.posterLayoutDrag;
+  if (!drag || !adminState.posterLayout) return;
+  const { width, height } = layoutStageSize();
+  const part = adminState.posterLayout[drag.selected];
+  const itemWidth = drag.selected === "nickname" ? (part.width || 0.42) * width : (part.size || 0.1) * width;
+  const itemHeight = drag.selected === "nickname" ? Math.max(24, (part.font_size || 0.032) * width * 1.2) : (part.size || 0.1) * width;
+  const nextX = drag.x + (event.clientX - drag.startX) / width;
+  const nextY = drag.y + (event.clientY - drag.startY) / height;
+  part.x = clamp(nextX, 0, Math.max(0, 1 - itemWidth / width));
+  part.y = clamp(nextY, 0, Math.max(0, 1 - itemHeight / height));
+  renderPosterLayoutStage();
+}
+
+function endPosterLayoutDrag() {
+  adminState.posterLayoutDrag = null;
 }
 
 function setCampaignStep(step) {
@@ -1448,6 +1675,19 @@ function bindEvents() {
     const index = campaignSteps.indexOf(adminState.campaignStep);
     setCampaignStep(campaignSteps[Math.min(campaignSteps.length - 1, index + 1)]);
   });
+  $("#close-poster-layout").addEventListener("click", closePosterLayout);
+  $("#reset-poster-layout").addEventListener("click", resetPosterLayout);
+  $("#save-poster-layout").addEventListener("click", savePosterLayout);
+  $("#poster-layout-selected").addEventListener("change", event => setLayoutSelected(event.target.value));
+  ["#poster-layout-size", "#poster-layout-width", "#poster-layout-color", "#poster-layout-align"].forEach(selector => {
+    $(selector).addEventListener("input", updatePosterLayoutFromControls);
+  });
+  $("#poster-layout-stage").addEventListener("pointerdown", startPosterLayoutDrag);
+  document.addEventListener("pointermove", movePosterLayoutDrag);
+  document.addEventListener("pointerup", endPosterLayoutDrag);
+  window.addEventListener("resize", () => {
+    if (!$("#poster-layout-modal").classList.contains("hidden")) renderPosterLayoutStage();
+  });
   $("#save-settings").addEventListener("click", () => saveSettings().catch(error => toast(error.message)));
   $("#admin-login-form").addEventListener("submit", event => {
     event.preventDefault();
@@ -1489,6 +1729,10 @@ function bindEvents() {
     const removeCampaignRow = event.target.closest("[data-remove-campaign-row]");
     if (removeCampaignRow) {
       removeCampaignRow.closest("tr")?.remove();
+    }
+    const posterLayout = event.target.closest("[data-poster-layout]");
+    if (posterLayout) {
+      openPosterLayout(posterLayout);
     }
     const removeProductImage = event.target.closest("[data-remove-product-image]");
     if (removeProductImage) {

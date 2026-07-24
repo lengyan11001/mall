@@ -162,6 +162,67 @@ function fitWithin(width, height, maxWidth, maxHeight) {
   };
 }
 
+function clampNumber(value, min, max, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(min, Math.min(max, num));
+}
+
+function defaultOverlayPosterLayout() {
+  return {
+    mode: "overlay",
+    qr: { x: 0.38, y: 0.34, size: 0.28 },
+    avatar: { x: 0.86, y: 0.025, size: 0.095 },
+    nickname: { x: 0.42, y: 0.045, width: 0.42, font_size: 0.032, color: "#ffffff", align: "right" }
+  };
+}
+
+function normalizeOverlayPosterLayout(layout = {}) {
+  const defaults = defaultOverlayPosterLayout();
+  return {
+    mode: layout.mode === "overlay" ? "overlay" : "",
+    qr: {
+      x: clampNumber(layout.qr?.x, 0, 0.98, defaults.qr.x),
+      y: clampNumber(layout.qr?.y, 0, 0.98, defaults.qr.y),
+      size: clampNumber(layout.qr?.size, 0.08, 0.5, defaults.qr.size)
+    },
+    avatar: {
+      x: clampNumber(layout.avatar?.x, 0, 0.98, defaults.avatar.x),
+      y: clampNumber(layout.avatar?.y, 0, 0.98, defaults.avatar.y),
+      size: clampNumber(layout.avatar?.size, 0.04, 0.22, defaults.avatar.size)
+    },
+    nickname: {
+      x: clampNumber(layout.nickname?.x, 0, 0.98, defaults.nickname.x),
+      y: clampNumber(layout.nickname?.y, 0, 0.98, defaults.nickname.y),
+      width: clampNumber(layout.nickname?.width, 0.08, 0.85, defaults.nickname.width),
+      font_size: clampNumber(layout.nickname?.font_size, 0.016, 0.08, defaults.nickname.font_size),
+      color: /^#[0-9a-f]{6}$/i.test(String(layout.nickname?.color || "")) ? String(layout.nickname.color) : defaults.nickname.color,
+      align: ["left", "center", "right"].includes(layout.nickname?.align) ? layout.nickname.align : defaults.nickname.align
+    }
+  };
+}
+
+function placedBox(box, canvasWidth, canvasHeight, isCircle = false) {
+  const size = Math.round(box.size * canvasWidth);
+  return {
+    left: Math.round(Math.min(box.x * canvasWidth, canvasWidth - size)),
+    top: Math.round(Math.min(box.y * canvasHeight, canvasHeight - size)),
+    size: isCircle ? size : size
+  };
+}
+
+function textAnchor(align) {
+  if (align === "right") return "end";
+  if (align === "center") return "middle";
+  return "start";
+}
+
+function textXForAlign(left, width, align) {
+  if (align === "right") return left + width;
+  if (align === "center") return left + width / 2;
+  return left;
+}
+
 function avatarInitials(user) {
   const text = String(user?.nickname || user?.avatar || "WX").trim() || "WX";
   return Array.from(text).slice(0, 2).join("").toUpperCase();
@@ -180,6 +241,69 @@ async function circleImageLayer(buffer, size) {
     .composite([{ input: roundedMask, blend: "dest-in" }])
     .png()
     .toBuffer();
+}
+
+async function buildOverlayInvitePoster({ posterAsset, user, qrcodeBuffer, outputPath, layout }) {
+  const sourceWidth = Number(posterAsset.width || 0);
+  const sourceHeight = Number(posterAsset.height || 0);
+  if (!posterAsset.buffer || !sourceWidth || !sourceHeight) return false;
+
+  const canvasWidth = 750;
+  const canvasHeight = Math.max(1, Math.round(canvasWidth * sourceHeight / sourceWidth));
+  const normalized = normalizeOverlayPosterLayout(layout);
+  const qr = placedBox(normalized.qr, canvasWidth, canvasHeight);
+  const avatar = placedBox(normalized.avatar, canvasWidth, canvasHeight, true);
+  const nicknameWidth = Math.round(normalized.nickname.width * canvasWidth);
+  const nicknameLeft = Math.round(Math.min(normalized.nickname.x * canvasWidth, canvasWidth - nicknameWidth));
+  const nicknameTop = Math.round(Math.min(normalized.nickname.y * canvasHeight, canvasHeight - 1));
+  const nicknameSize = Math.round(normalized.nickname.font_size * canvasWidth);
+  const nickname = user.nickname || `用户${user.id}`;
+  const maxChars = Math.max(2, Math.floor(nicknameWidth / Math.max(10, nicknameSize * 0.62)));
+  const nicknameLines = textLines(nickname, maxChars, 2);
+  const nicknameText = nicknameLines.map((line, index) => {
+    const lineY = nicknameTop + nicknameSize + index * Math.round(nicknameSize * 1.18);
+    return `<text x="${textXForAlign(nicknameLeft, nicknameWidth, normalized.nickname.align)}" y="${lineY}" text-anchor="${textAnchor(normalized.nickname.align)}" font-size="${nicknameSize}" font-weight="900" fill="${normalized.nickname.color}" stroke="#000000" stroke-width="${Math.max(1, Math.round(nicknameSize * 0.045))}" paint-order="stroke fill">${escapeXml(line)}</text>`;
+  }).join("");
+  const avatarFallback = `
+    <circle cx="${avatar.left + avatar.size / 2}" cy="${avatar.top + avatar.size / 2}" r="${avatar.size / 2}" fill="#14b8a6"/>
+    <text x="${avatar.left + avatar.size / 2}" y="${avatar.top + avatar.size * 0.64}" text-anchor="middle" font-size="${Math.round(avatar.size * 0.36)}" font-weight="900" fill="#ffffff">${escapeXml(avatarInitials(user))}</text>
+  `;
+  const overlaySvg = Buffer.from(`
+<svg width="${canvasWidth}" height="${canvasHeight}" viewBox="0 0 ${canvasWidth} ${canvasHeight}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      text { font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif; }
+    </style>
+  </defs>
+  <rect x="${qr.left - 10}" y="${qr.top - 10}" width="${qr.size + 20}" height="${qr.size + 20}" rx="0" fill="#ffffff"/>
+  <circle cx="${avatar.left + avatar.size / 2}" cy="${avatar.top + avatar.size / 2}" r="${avatar.size / 2 + 4}" fill="#ffffff" opacity="0.96"/>
+  ${avatarFallback}
+  ${nicknameText}
+</svg>`);
+
+  const avatarAsset = await imageAsset(user.avatar);
+  const qrcodeLayer = await sharp(qrcodeBuffer)
+    .resize(qr.size, qr.size, { fit: "contain", background: "#ffffff" })
+    .png()
+    .toBuffer();
+  const composites = [
+    { input: overlaySvg, left: 0, top: 0 },
+    { input: qrcodeLayer, left: qr.left, top: qr.top }
+  ];
+  if (avatarAsset.buffer) {
+    composites.push({
+      input: await circleImageLayer(avatarAsset.buffer, avatar.size),
+      left: avatar.left,
+      top: avatar.top
+    });
+  }
+
+  await sharp(posterAsset.buffer)
+    .resize(canvasWidth, canvasHeight, { fit: "fill" })
+    .png()
+    .composite(composites)
+    .toFile(outputPath);
+  return true;
 }
 
 async function ensureInviteDir() {
@@ -205,6 +329,16 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   const inviter = user.nickname || `用户${user.id}`;
   const productImageUrl = Array.isArray(product.images) && product.images.length ? product.images[0] : product.image_url || "";
   const posterAsset = await imageAsset(primaryPoster.image_url || campaign.share_cover || productImageUrl);
+  if (primaryPoster.layout?.mode === "overlay" && posterAsset.buffer) {
+    const built = await buildOverlayInvitePoster({
+      posterAsset,
+      user,
+      qrcodeBuffer,
+      outputPath,
+      layout: primaryPoster.layout
+    });
+    if (built) return;
+  }
   const avatarAsset = await imageAsset(user.avatar);
   const hasPosterImage = Boolean(posterAsset.dataUri);
   const visualMaxWidth = 690;
