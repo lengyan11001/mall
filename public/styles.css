@@ -3152,10 +3152,10 @@ tr:last-child td {
 }
 
 .public-screen .battle-screen {
-  width: min(100vw, calc(100vh * 1.875));
-  height: min(100vh, calc(100vw / 1.875));
+  width: 100vw;
+  height: 100vh;
   min-height: 0;
-  aspect-ratio: 15 / 8;
+  aspect-ratio: auto;
   padding: 0;
 }
 
