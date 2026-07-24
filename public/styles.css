@@ -3580,7 +3580,7 @@ tr:last-child td {
 /* Real card artwork: every battle panel uses the same transparent PNG asset. */
 .battle-panel {
   border: 0;
-  background: url("/assets/battle-panel-card.png") center / 100% 100% no-repeat;
+  background: url("/assets/battle-panel-card-ref.png") center / 100% 100% no-repeat;
   clip-path: none;
   box-shadow: none;
 }
