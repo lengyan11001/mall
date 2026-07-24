@@ -3308,3 +3308,144 @@ tr:last-child td {
     height: min(15.2vh, 8.9vw);
   }
 }
+
+/* Reference screenshot scale: smaller content blocks with no repeated corner boxes. */
+.battle-title {
+  width: min(34vw, 590px);
+  height: 9.8vh;
+}
+
+.battle-title h1 {
+  font-size: clamp(18px, 1.35vw, 25px);
+}
+
+.battle-frame-top {
+  top: 7.4%;
+}
+
+.battle-frame-bottom {
+  bottom: 4.8%;
+}
+
+.battle-layout {
+  top: 22.4%;
+  right: 2.4%;
+  bottom: 12.2%;
+  left: 2.4%;
+  grid-template-columns: 1fr 1fr 0.98fr;
+  gap: 1.2%;
+}
+
+.battle-left,
+.battle-center,
+.battle-right {
+  grid-template-rows: 55% 38%;
+  gap: 4.8%;
+}
+
+.battle-panel {
+  padding: min(1vh, 9px) min(0.72vw, 10px);
+  border-color: rgba(59, 177, 238, 0.18);
+  border-radius: 2px;
+  background:
+    linear-gradient(180deg, rgba(12, 77, 143, 0.22), rgba(7, 38, 87, 0.12)),
+    linear-gradient(90deg, rgba(47, 202, 255, 0.07), transparent 22%, transparent 78%, rgba(47, 202, 255, 0.07));
+}
+
+.battle-panel::before,
+.battle-panel::after {
+  display: none;
+}
+
+.battle-panel-title {
+  margin-bottom: min(0.9vh, 8px);
+  font-size: clamp(10px, 0.72vw, 13px);
+}
+
+.battle-kpi h3 {
+  margin-bottom: min(0.8vh, 7px);
+  font-size: clamp(13px, 1.02vw, 18px);
+}
+
+.battle-countdown {
+  margin-bottom: min(1.35vh, 12px);
+}
+
+.battle-countdown span {
+  font-size: clamp(13px, 1vw, 17px);
+}
+
+.battle-countdown strong {
+  min-height: clamp(20px, 2.6vh, 28px);
+  padding: 1px 7px;
+  font-size: clamp(15px, 1.25vw, 22px);
+  letter-spacing: 1px;
+}
+
+.battle-kpi-grid {
+  grid-template-columns: 1fr 26% 1fr;
+  gap: 3.5%;
+}
+
+.battle-stats {
+  gap: min(1.65vh, 13px);
+}
+
+.battle-stats div {
+  padding-bottom: min(0.8vh, 6px);
+  font-size: clamp(10px, 0.66vw, 12px);
+}
+
+.battle-orbit {
+  width: min(7.2vw, 13.6vh);
+  height: min(7.2vw, 13.6vh);
+}
+
+.battle-orbit::before {
+  inset: -9px;
+}
+
+.battle-orbit::after {
+  inset: 12px;
+  border-width: 6px;
+}
+
+.battle-orbit strong {
+  width: min(3.5vw, 6.7vh);
+  height: min(3.5vw, 6.7vh);
+  font-size: clamp(22px, 2.25vw, 38px);
+}
+
+.battle-table-head,
+.battle-table-row {
+  min-height: min(3vh, 26px);
+  padding: 0 min(0.55vw, 8px);
+  font-size: clamp(9px, 0.58vw, 11px);
+}
+
+.battle-rank-row {
+  min-height: min(3vh, 26px);
+  padding: 0 min(0.62vw, 9px);
+  font-size: clamp(9px, 0.6vw, 11px);
+}
+
+.battle-user i,
+.battle-rank-row i {
+  width: min(1.35vw, 20px);
+  height: min(1.35vw, 20px);
+  flex-basis: min(1.35vw, 20px);
+}
+
+.battle-bars {
+  height: calc(100% - min(2.5vh, 20px));
+  gap: min(1.25vh, 10px);
+}
+
+.battle-bar-row {
+  grid-template-columns: 58px 1fr 28px;
+  font-size: clamp(9px, 0.6vw, 11px);
+}
+
+.battle-bar-row b {
+  height: min(1.5vh, 14px);
+}
