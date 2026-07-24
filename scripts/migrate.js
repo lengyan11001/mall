@@ -60,6 +60,7 @@ async function migrateTenancy(conn) {
     "acquisition_orders",
     "acquisition_relations",
     "acquisition_lottery_records",
+    "acquisition_lottery_prize_stocks",
     "commissions",
     "withdrawals",
     "screen_heartbeats",
@@ -71,9 +72,11 @@ async function migrateTenancy(conn) {
     await conn.query(`UPDATE \`${table}\` SET appid = ? WHERE appid = '' OR appid IS NULL`, [appid]);
   }
 
+  await conn.query("ALTER TABLE app_settings MODIFY id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT");
   await dropIndexIfExists(conn, "users", "uk_users_openid");
   await addIndexIfMissing(conn, "users", "uk_users_appid_openid", "UNIQUE KEY uk_users_appid_openid (appid, openid)");
   await addIndexIfMissing(conn, "users", "idx_users_appid_created", "KEY idx_users_appid_created (appid, created_at)");
+  await addIndexIfMissing(conn, "users", "idx_users_app_parent", "KEY idx_users_app_parent (appid, parent_id, id)");
 
   await addIndexIfMissing(conn, "user_addresses", "idx_user_addresses_app_user_default", "KEY idx_user_addresses_app_user_default (appid, user_id, is_default, id)");
 
@@ -89,8 +92,11 @@ async function migrateTenancy(conn) {
 
   await addIndexIfMissing(conn, "orders", "idx_orders_app_user_created", "KEY idx_orders_app_user_created (appid, user_id, created_at)");
   await addIndexIfMissing(conn, "orders", "idx_orders_app_status_created", "KEY idx_orders_app_status_created (appid, status, created_at)");
+  await addIndexIfMissing(conn, "orders", "idx_orders_app_status_expires", "KEY idx_orders_app_status_expires (appid, status, expires_at, id)");
+  await addIndexIfMissing(conn, "orders", "idx_orders_app_user_status_expires", "KEY idx_orders_app_user_status_expires (appid, user_id, status, expires_at)");
 
   await addIndexIfMissing(conn, "acquisition_orders", "idx_acquisition_orders_campaign_app", "KEY idx_acquisition_orders_campaign_app (appid, campaign_id, created_at)");
+  await addIndexIfMissing(conn, "acquisition_orders", "idx_acquisition_orders_campaign_order", "KEY idx_acquisition_orders_campaign_order (appid, campaign_id, order_id)");
   await addIndexIfMissing(conn, "acquisition_orders", "idx_acquisition_orders_inviter_app", "KEY idx_acquisition_orders_inviter_app (appid, campaign_id, inviter_id)");
 
   await dropIndexIfExists(conn, "acquisition_relations", "uk_campaign_member");
@@ -100,9 +106,12 @@ async function migrateTenancy(conn) {
 
   await addIndexIfMissing(conn, "acquisition_lottery_records", "idx_lottery_campaign_app", "KEY idx_lottery_campaign_app (appid, campaign_id, created_at)");
   await addIndexIfMissing(conn, "acquisition_lottery_records", "idx_lottery_user_app", "KEY idx_lottery_user_app (appid, user_id, created_at)");
+  await addIndexIfMissing(conn, "acquisition_lottery_records", "idx_lottery_campaign_prize", "KEY idx_lottery_campaign_prize (appid, campaign_id, prize_type, prize_name, status)");
 
   await addIndexIfMissing(conn, "commissions", "idx_commissions_beneficiary_app", "KEY idx_commissions_beneficiary_app (appid, beneficiary_id, status)");
   await addIndexIfMissing(conn, "commissions", "idx_commissions_buyer_app", "KEY idx_commissions_buyer_app (appid, buyer_id)");
+  await addIndexIfMissing(conn, "commissions", "idx_commissions_app_order_status", "KEY idx_commissions_app_order_status (appid, order_id, status)");
+  await addIndexIfMissing(conn, "commissions", "idx_commissions_app_created", "KEY idx_commissions_app_created (appid, created_at)");
 
   await addIndexIfMissing(conn, "withdrawals", "idx_withdrawals_user_app", "KEY idx_withdrawals_user_app (appid, user_id, status)");
   await addIndexIfMissing(conn, "withdrawals", "idx_withdrawals_status_app", "KEY idx_withdrawals_status_app (appid, status, created_at)");
@@ -188,6 +197,23 @@ async function migrateAcquisition(conn) {
   await addColumnIfMissing(conn, "acquisition_campaigns", "virtual_invite_count", "INT UNSIGNED NOT NULL DEFAULT 0");
   await addColumnIfMissing(conn, "acquisition_campaigns", "virtual_rankings", "JSON NULL");
   await addColumnIfMissing(conn, "acquisition_orders", "scene", "VARCHAR(64) NOT NULL DEFAULT '' AFTER form_values");
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS acquisition_lottery_prize_stocks (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      appid VARCHAR(32) NOT NULL DEFAULT '',
+      campaign_id BIGINT UNSIGNED NOT NULL,
+      prize_key VARCHAR(64) NOT NULL,
+      prize_name VARCHAR(120) NOT NULL DEFAULT '',
+      prize_type ENUM('thanks','cash','goods','coupon') NOT NULL DEFAULT 'thanks',
+      stock_total INT UNSIGNED NOT NULL DEFAULT 0,
+      stock_used INT UNSIGNED NOT NULL DEFAULT 0,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_lottery_prize_stock (appid, campaign_id, prize_key),
+      KEY idx_lottery_prize_stock_campaign (appid, campaign_id),
+      CONSTRAINT fk_lottery_prize_stock_campaign FOREIGN KEY (campaign_id) REFERENCES acquisition_campaigns(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  `);
 }
 
 async function migrateAddresses(conn) {
@@ -235,11 +261,14 @@ async function migratePayments(conn) {
   await addColumnIfMissing(conn, "orders", "out_trade_no", "VARCHAR(64) NULL AFTER pay_provider");
   await addColumnIfMissing(conn, "orders", "transaction_id", "VARCHAR(64) NOT NULL DEFAULT '' AFTER out_trade_no");
   await addColumnIfMissing(conn, "orders", "prepay_id", "VARCHAR(128) NOT NULL DEFAULT '' AFTER transaction_id");
+  await addColumnIfMissing(conn, "orders", "expires_at", "TIMESTAMP NULL DEFAULT NULL AFTER logistics_no");
   await conn.query("ALTER TABLE orders MODIFY out_trade_no VARCHAR(64) NULL");
   await conn.query("UPDATE orders SET out_trade_no = NULL WHERE out_trade_no = ''");
   await widenOrderStatusIfNeeded(conn);
   await addIndexIfMissing(conn, "orders", "uk_orders_out_trade_no", "UNIQUE KEY uk_orders_out_trade_no (out_trade_no)");
   await addIndexIfMissing(conn, "orders", "idx_orders_transaction", "KEY idx_orders_transaction (transaction_id)");
+  await addIndexIfMissing(conn, "orders", "idx_orders_app_status_expires", "KEY idx_orders_app_status_expires (appid, status, expires_at, id)");
+  await addIndexIfMissing(conn, "orders", "idx_orders_app_user_status_expires", "KEY idx_orders_app_user_status_expires (appid, user_id, status, expires_at)");
 }
 
 async function widenOrderStatusIfNeeded(conn) {

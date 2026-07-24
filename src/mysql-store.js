@@ -187,6 +187,33 @@ function cleanText(value, fallback = "", max = 255) {
   return String(value ?? fallback).trim().slice(0, max);
 }
 
+function positiveInt(value, fallback = 0, max = Number.MAX_SAFE_INTEGER) {
+  const number = Math.floor(Number(value));
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+  return Math.min(number, max);
+}
+
+function unpaidOrderTtlMinutes() {
+  return positiveInt(process.env.UNPAID_ORDER_TTL_MINUTES, 15, 120);
+}
+
+function orderExpiresAt() {
+  return new Date(Date.now() + unpaidOrderTtlMinutes() * 60 * 1000);
+}
+
+function mysqlDateFromDate(date) {
+  return date.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function publicListLimit(value, fallback = 100, max = 300) {
+  return positiveInt(value, fallback, max);
+}
+
+function publicOffset(page = 1, pageSize = 100) {
+  const normalizedPage = positiveInt(page, 1, 100000);
+  return (normalizedPage - 1) * pageSize;
+}
+
 function heartbeatSessionKey(body) {
   const userId = assertId(body.user_id, "用户 ID");
   const campaignId = Number(body.campaign_id || 0);
@@ -312,6 +339,16 @@ function addressPayload(body, existing = {}) {
 }
 
 function createStore(pool = createPool()) {
+  const screenDashboardCache = new Map();
+
+  function onlineWindowSeconds() {
+    return positiveInt(process.env.SCREEN_ONLINE_WINDOW_SECONDS, 6, 60);
+  }
+
+  function screenDashboardCacheMs() {
+    return positiveInt(process.env.SCREEN_DASHBOARD_CACHE_MS, 3000, 30000);
+  }
+
   async function ping() {
     await pool.query("SELECT 1");
   }
@@ -321,15 +358,14 @@ function createStore(pool = createPool()) {
     let row = await one(conn, "SELECT * FROM app_settings WHERE appid = :appid", { appid: scopedAppId });
     if (!row && scopedAppId) {
       const fallback = await one(conn, "SELECT * FROM app_settings ORDER BY id LIMIT 1");
-      const nextId = await one(conn, "SELECT COALESCE(MAX(id), 0) + 1 id FROM app_settings");
       await conn.query(
         `INSERT INTO app_settings (
-          id, appid, commission_level_1, commission_level_2, min_withdrawal, compliance_name, auto_pay_enabled, screen_audio_url
+          appid, commission_level_1, commission_level_2, min_withdrawal, compliance_name, auto_pay_enabled, screen_audio_url
         ) VALUES (
-          :id, :appid, :level1, :level2, :minWithdrawal, :complianceName, :autoPayEnabled, :screenAudioUrl
-        )`,
+          :appid, :level1, :level2, :minWithdrawal, :complianceName, :autoPayEnabled, :screenAudioUrl
+        )
+        ON DUPLICATE KEY UPDATE appid = appid`,
         {
-          id: Number(nextId?.id || 1),
           appid: scopedAppId,
           level1: Number(fallback?.commission_level_1 ?? 0.12),
           level2: Number(fallback?.commission_level_2 ?? 0.05),
@@ -370,6 +406,41 @@ function createStore(pool = createPool()) {
     const user = await one(conn, `SELECT * FROM users WHERE id = :id${appFilter}`, params);
     if (!user) throw appError(404, "用户不存在");
     return normalizeUser(user);
+  }
+
+  async function requireSessionUser(userId, sessionToken = "", appid = "", conn = pool) {
+    const scopedAppId = normalizeAppId(appid);
+    const id = assertId(userId, "用户 ID");
+    const token = cleanText(sessionToken, "", 80);
+    if (!token) throw appError(401, "登录已失效，请重新进入小程序");
+    const user = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid AND session_token = :sessionToken", {
+      id,
+      appid: scopedAppId,
+      sessionToken: token
+    });
+    if (!user) throw appError(401, "登录已失效，请重新进入小程序");
+    return normalizeUser(user);
+  }
+
+  async function requireSessionOrder(orderId, sessionToken = "", appid = "", conn = pool) {
+    const scopedAppId = normalizeAppId(appid);
+    const id = assertId(orderId, "订单 ID");
+    const token = cleanText(sessionToken, "", 80);
+    if (!token) throw appError(401, "登录已失效，请重新进入小程序");
+    const row = await one(conn, `
+      SELECT o.id
+      FROM orders o
+      JOIN users u ON u.id = o.user_id AND u.appid = o.appid
+      WHERE o.id = :id
+        AND o.appid = :appid
+        AND u.session_token = :sessionToken
+    `, {
+      id,
+      appid: scopedAppId,
+      sessionToken: token
+    });
+    if (!row) throw appError(403, "无权操作该订单");
+    return true;
   }
 
   async function listUserAddresses(userId, conn = pool, appid = "") {
@@ -890,29 +961,26 @@ function createStore(pool = createPool()) {
       throw appError(404, "活动不在有效期内");
     }
     campaign.purchased_count = 0;
+    campaign.reserved_count = 0;
     campaign.remaining_user_limit = campaign.per_user_limit ? Number(campaign.per_user_limit) : 0;
     if (userId) {
-      const purchased = await one(pool, `
-        SELECT COALESCE(SUM(o.quantity), 0) total
-        FROM acquisition_orders ao
-        JOIN orders o ON o.id = ao.order_id
-        WHERE ao.campaign_id = :campaignId AND o.user_id = :userId AND o.appid = :appid AND o.status IN ('paid','shipped','received')
-      `, { campaignId: campaign.id, userId: Number(userId), appid: scopedAppId });
-      campaign.purchased_count = Number(purchased?.total || 0);
+      const usage = await acquisitionBuyerQuantity(pool, campaign.id, Number(userId), scopedAppId);
+      campaign.purchased_count = usage.paid;
+      campaign.reserved_count = usage.reserved;
       campaign.remaining_user_limit = campaign.per_user_limit
-        ? Math.max(0, Number(campaign.per_user_limit) - campaign.purchased_count)
+        ? Math.max(0, Number(campaign.per_user_limit) - usage.active)
         : 0;
       campaign.relation = campaign.relation_mode === "activity_visit"
         ? await lockAcquisitionRelation(pool, campaign, Number(userId), scene, "visit", scopedAppId)
         : await acquisitionRelationSnapshot(pool, campaign, Number(userId), scene, "visit", scopedAppId);
     }
-    if (campaign.active_qrcodes?.length) {
+    if (campaign.active_qrcodes?.length && Number(campaign.active_qrcodes[0].show_limit || 0) > 0) {
       const qrcodeId = campaign.active_qrcodes[0].id;
-      await pool.query(
-        "UPDATE acquisition_qrcodes SET shown_count = shown_count + 1 WHERE id = :qrcodeId",
+      const [shownResult] = await pool.query(
+        "UPDATE acquisition_qrcodes SET shown_count = shown_count + 1 WHERE id = :qrcodeId AND shown_count < show_limit",
         { qrcodeId }
       );
-      campaign.active_qrcodes[0].shown_count += 1;
+      if (shownResult.affectedRows) campaign.active_qrcodes[0].shown_count += 1;
     }
     return campaign;
   }
@@ -1296,8 +1364,10 @@ function createStore(pool = createPool()) {
     return listAcquisitionMaterials(scopedAppId);
   }
 
-  async function loadOrderRows(whereSql, params = {}, conn = pool) {
+  async function loadOrderRows(whereSql, params = {}, conn = pool, options = {}) {
     const queryParams = { appid: null, ...params };
+    const limit = options.limit ? publicListLimit(options.limit, 100, 500) : 0;
+    const offset = limit ? publicOffset(options.page, limit) : 0;
     return many(conn, `
       SELECT
         o.*,
@@ -1319,10 +1389,11 @@ function createStore(pool = createPool()) {
       LEFT JOIN users u ON u.id = o.user_id AND (:appid IS NULL OR u.appid = :appid)
       ${whereSql}
       ORDER BY o.created_at DESC, o.id DESC
+      ${limit ? `LIMIT ${limit} OFFSET ${offset}` : ""}
     `, queryParams);
   }
 
-  async function listOrders({ userId = null, appid = "" } = {}) {
+  async function listOrders({ userId = null, appid = "", page = 1, pageSize = 100 } = {}) {
     const filters = [];
     const params = {};
     if (appid) {
@@ -1333,7 +1404,10 @@ function createStore(pool = createPool()) {
       filters.push("o.user_id = :userId");
       params.userId = userId;
     }
-    const rows = await loadOrderRows(filters.length ? `WHERE ${filters.join(" AND ")}` : "", params);
+    const rows = await loadOrderRows(filters.length ? `WHERE ${filters.join(" AND ")}` : "", params, pool, {
+      page,
+      limit: pageSize
+    });
     return rows.map(orderRow);
   }
 
@@ -1508,6 +1582,83 @@ function createStore(pool = createPool()) {
     return Number(row?.count || 0);
   }
 
+  async function acquisitionBuyerQuantity(conn, campaignId, userId, appid = "", options = {}) {
+    const scopedAppId = normalizeAppId(appid);
+    const excludedOrderId = Number(options.excludeOrderId || 0);
+    const row = await one(conn, `
+      SELECT
+        COALESCE(SUM(CASE WHEN o.status IN ('paid','shipped','received') THEN o.quantity ELSE 0 END), 0) paid_quantity,
+        COALESCE(SUM(CASE
+          WHEN o.status = 'unpaid' AND (o.expires_at IS NULL OR o.expires_at > UTC_TIMESTAMP()) THEN o.quantity
+          ELSE 0
+        END), 0) reserved_quantity
+      FROM acquisition_orders ao
+      JOIN orders o ON o.id = ao.order_id
+      WHERE ao.campaign_id = :campaignId
+        AND o.user_id = :userId
+        AND o.appid = :appid
+        ${excludedOrderId ? "AND o.id <> :excludedOrderId" : ""}
+    `, { campaignId, userId, appid: scopedAppId, excludedOrderId });
+    return {
+      paid: Number(row?.paid_quantity || 0),
+      reserved: Number(row?.reserved_quantity || 0),
+      active: Number(row?.paid_quantity || 0) + Number(row?.reserved_quantity || 0)
+    };
+  }
+
+  async function assertCampaignUserLimit(conn, campaign, userId, quantity, appid = "", options = {}) {
+    const limit = Number(campaign?.per_user_limit || 0);
+    if (!limit) return { paid: 0, reserved: 0, active: 0, remaining: 0 };
+    const usage = await acquisitionBuyerQuantity(conn, campaign.id, userId, appid || campaign.appid, options);
+    const usedQuantity = options.paidOnly ? usage.paid : usage.active;
+    if (usedQuantity + Number(quantity || 0) > limit) {
+      throw appError(409, `每人最多购买 ${limit} 件`);
+    }
+    return {
+      ...usage,
+      remaining: Math.max(0, limit - usedQuantity)
+    };
+  }
+
+  async function productBuyerQuantity(conn, productId, userId, appid = "", options = {}) {
+    const scopedAppId = normalizeAppId(appid);
+    const excludedOrderId = Number(options.excludeOrderId || 0);
+    const row = await one(conn, `
+      SELECT
+        COALESCE(SUM(CASE WHEN status IN ('paid','shipped','received') THEN quantity ELSE 0 END), 0) paid_quantity,
+        COALESCE(SUM(CASE
+          WHEN status = 'unpaid' AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP()) THEN quantity
+          ELSE 0
+        END), 0) reserved_quantity
+      FROM orders
+      WHERE product_id = :productId
+        AND user_id = :userId
+        AND appid = :appid
+        ${excludedOrderId ? "AND id <> :excludedOrderId" : ""}
+    `, { productId, userId, appid: scopedAppId, excludedOrderId });
+    return {
+      paid: Number(row?.paid_quantity || 0),
+      reserved: Number(row?.reserved_quantity || 0),
+      active: Number(row?.paid_quantity || 0) + Number(row?.reserved_quantity || 0)
+    };
+  }
+
+  async function assertProductUserLimit(conn, product, userId, quantity, appid = "", options = {}) {
+    if (!options.skipQuantityRules) {
+      const perOrder = Number(product.per_order_limit || 0);
+      if (perOrder && Number(quantity || 0) > perOrder) throw appError(409, `每单最多购买 ${perOrder} 件`);
+      const minBuy = Number(product.min_buy_qty || 1);
+      if (Number(quantity || 0) < minBuy) throw appError(409, `最少购买 ${minBuy} 件`);
+    }
+    const perUser = Number(product.per_user_limit || 0);
+    if (!perUser) return;
+    const usage = await productBuyerQuantity(conn, product.id, userId, appid || product.appid, options);
+    const usedQuantity = options.paidOnly ? usage.paid : usage.active;
+    if (usedQuantity + Number(quantity || 0) > perUser) {
+      throw appError(409, `每人最多购买 ${perUser} 件`);
+    }
+  }
+
   async function acquisitionDirectOrderCount(conn, campaignId, inviterId, appid = "") {
     const scopedAppId = normalizeAppId(appid);
     const row = await one(conn, `
@@ -1660,17 +1811,69 @@ function createStore(pool = createPool()) {
     return normalized.length ? normalized : [thanksPrize()];
   }
 
+  function lotteryPrizeKey(prize) {
+    const source = JSON.stringify([
+      cleanText(prize.name, "谢谢参与", 120),
+      enumValue(prize.type, ["thanks", "cash", "goods", "coupon"], "thanks"),
+      money(prize.amount || 0)
+    ]);
+    return crypto.createHash("sha1").update(source).digest("hex");
+  }
+
+  async function reserveLotteryPrizeStock(conn, campaign, prize, appid = "") {
+    const scopedAppId = normalizeAppId(appid || campaign.appid);
+    if (prize.type === "thanks" || Number(prize.quantity || 0) <= 0) return true;
+    const prizeKey = lotteryPrizeKey(prize);
+    await conn.query(`
+      INSERT INTO acquisition_lottery_prize_stocks (
+        appid, campaign_id, prize_key, prize_name, prize_type, stock_total, stock_used
+      )
+      SELECT
+        :appid,
+        :campaignId,
+        :prizeKey,
+        :prizeName,
+        :prizeType,
+        :stockTotal,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM acquisition_lottery_records
+          WHERE appid = :appid
+            AND campaign_id = :campaignId
+            AND prize_name = :prizeName
+            AND prize_type = :prizeType
+            AND status <> 'failed'
+        ), 0)
+      ON DUPLICATE KEY UPDATE
+        prize_name = VALUES(prize_name),
+        prize_type = VALUES(prize_type),
+        stock_total = VALUES(stock_total)
+    `, {
+      appid: scopedAppId,
+      campaignId: campaign.id,
+      prizeKey,
+      prizeName: prize.name,
+      prizeType: prize.type,
+      stockTotal: Math.max(0, Math.floor(Number(prize.quantity || 0)))
+    });
+    const [result] = await conn.query(`
+      UPDATE acquisition_lottery_prize_stocks
+      SET stock_used = stock_used + 1
+      WHERE appid = :appid
+        AND campaign_id = :campaignId
+        AND prize_key = :prizeKey
+        AND stock_used < stock_total
+    `, {
+      appid: scopedAppId,
+      campaignId: campaign.id,
+      prizeKey
+    });
+    return Boolean(result.affectedRows);
+  }
+
   async function availableLotteryPrize(conn, campaign, userId, prize, appid = "") {
     const scopedAppId = normalizeAppId(appid || campaign.appid);
     if (prize.type === "thanks") return true;
-    if (prize.quantity > 0) {
-      const used = await one(conn, `
-        SELECT COUNT(*) used
-        FROM acquisition_lottery_records
-        WHERE appid = :appid AND campaign_id = :campaignId AND prize_name = :prizeName AND status <> 'failed'
-      `, { appid: scopedAppId, campaignId: campaign.id, prizeName: prize.name });
-      if (Number(used.used || 0) >= prize.quantity) return false;
-    }
     if (prize.limit_per_user > 0) {
       const userUsed = await one(conn, `
         SELECT COUNT(*) used
@@ -1698,6 +1901,8 @@ function createStore(pool = createPool()) {
       }
     }
     if (!(await availableLotteryPrize(conn, campaign, buyer.id, selected, scopedAppId))) {
+      selected = thanksPrize();
+    } else if (!(await reserveLotteryPrizeStock(conn, campaign, selected, scopedAppId))) {
       selected = thanksPrize();
     }
     const status = selected.type === "thanks" || config.cash_direct ? "issued" : "pending";
@@ -1779,6 +1984,49 @@ function createStore(pool = createPool()) {
     });
   }
 
+  async function closeExpiredOrders(options = {}) {
+    const scopedAppId = options.appid ? normalizeAppId(options.appid) : "";
+    const limit = publicListLimit(options.limit, 100, 500);
+    return tx(pool, async conn => {
+      const filters = [
+        "status = 'unpaid'",
+        "expires_at IS NOT NULL",
+        "expires_at <= UTC_TIMESTAMP()"
+      ];
+      const params = {};
+      if (scopedAppId) {
+        filters.push("appid = :appid");
+        params.appid = scopedAppId;
+      }
+      const expired = await many(conn, `
+        SELECT *
+        FROM orders
+        WHERE ${filters.join(" AND ")}
+        ORDER BY expires_at ASC, id ASC
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      `, params);
+      for (const order of expired) {
+        const meta = await acquisitionOrderMeta(conn, order.id);
+        await conn.query(
+          "UPDATE orders SET status = 'closed' WHERE id = :id AND appid = :appid AND status = 'unpaid'",
+          { id: order.id, appid: order.appid }
+        );
+        await conn.query(
+          "UPDATE products SET stock = stock + :quantity, sales = GREATEST(sales - :quantity, 0) WHERE id = :productId AND appid = :appid",
+          { quantity: order.quantity, productId: order.product_id, appid: order.appid }
+        );
+        if (meta) {
+          await conn.query(
+            "UPDATE acquisition_campaigns SET sold_count = GREATEST(sold_count - :quantity, 0) WHERE id = :campaignId AND appid = :appid",
+            { quantity: order.quantity, campaignId: meta.campaignId, appid: order.appid }
+          );
+        }
+      }
+      return { closed_count: expired.length };
+    });
+  }
+
   async function finalizePaidOrder(conn, order, payInfo = {}) {
     const scopedAppId = normalizeAppId(order.appid);
     if (["paid", "shipped", "received"].includes(order.status)) {
@@ -1806,6 +2054,7 @@ function createStore(pool = createPool()) {
       const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id AND ac.appid = :appid FOR UPDATE`, { id: meta.campaignId, appid: scopedAppId });
       if (!row) throw appError(404, "拓客宝活动不存在");
       campaign = campaignRow(row);
+      await assertCampaignUserLimit(conn, campaign, buyer.id, order.quantity, scopedAppId, { excludeOrderId: order.id, paidOnly: true });
       relation = await lockAcquisitionRelation(conn, campaign, buyer.id, meta.scene, "paid", scopedAppId);
       await approveDistributorIfNeeded(conn, relation?.inviter_id, scopedAppId);
       await approveDistributorIfNeeded(conn, relation?.parent_inviter_id, scopedAppId);
@@ -1824,6 +2073,8 @@ function createStore(pool = createPool()) {
         teamLeaderId: relation?.team_leader_id || null,
         indirectTeamLeaderId: relation?.indirect_team_leader_id || null
       });
+    } else {
+      await assertProductUserLimit(conn, product, buyer.id, order.quantity, scopedAppId, { excludeOrderId: order.id, paidOnly: true, skipQuantityRules: true });
     }
     await conn.query(`
       UPDATE orders
@@ -1873,26 +2124,22 @@ function createStore(pool = createPool()) {
         const now = Date.now();
         if (new Date(campaign.start_at).getTime() > now || new Date(campaign.end_at).getTime() < now) throw appError(409, "活动不在有效期内");
         if (campaign.per_order_limit && quantity > campaign.per_order_limit) throw appError(409, `每单最多购买 ${campaign.per_order_limit} 件`);
-        const purchased = await one(conn, `
-          SELECT COALESCE(SUM(o.quantity), 0) total
-          FROM acquisition_orders ao
-          JOIN orders o ON o.id = ao.order_id
-          WHERE ao.campaign_id = :campaignId AND o.user_id = :userId AND o.appid = :appid AND o.status IN ('paid','shipped','received')
-        `, { campaignId: campaign.id, userId: buyer.id, appid: scopedAppId });
-        if (campaign.per_user_limit && Number(purchased.total || 0) + quantity > campaign.per_user_limit) throw appError(409, `每人最多购买 ${campaign.per_user_limit} 件`);
+        await assertCampaignUserLimit(conn, campaign, buyer.id, quantity, scopedAppId);
         if (Number(campaign.stock) - Number(campaign.sold_count || 0) < quantity) throw appError(409, "活动库存不足");
         productId = campaign.product_id;
       }
       const product = await one(conn, "SELECT * FROM products WHERE id = :id AND appid = :appid AND status = 'on' FOR UPDATE", { id: productId, appid: scopedAppId });
       if (!product) throw appError(404, "商品不存在或已下架");
+      if (!campaign) await assertProductUserLimit(conn, product, buyer.id, quantity, scopedAppId);
       if (Number(product.stock) < quantity) throw appError(409, "库存不足");
       const orderAddress = await resolveOrderAddress(conn, buyer.id, body, scopedAppId);
 
       const amount = money(Number(campaign ? campaign.lead_price : product.price) * quantity);
-      await conn.query(
+      const [productStockResult] = await conn.query(
         "UPDATE products SET stock = stock - :quantity, sales = sales + :quantity WHERE id = :id AND appid = :appid AND stock >= :quantity",
         { quantity, id: product.id, appid: scopedAppId }
       );
+      if (!productStockResult.affectedRows) throw appError(409, "库存不足");
       if (campaign) {
         const [stockResult] = await conn.query(
           `UPDATE acquisition_campaigns
@@ -1902,9 +2149,10 @@ function createStore(pool = createPool()) {
         );
         if (!stockResult.affectedRows) throw appError(409, "活动库存不足");
       }
+      const expiresAt = orderExpiresAt();
       const [result] = await conn.query(
-        `INSERT INTO orders (appid, user_id, product_id, quantity, amount, status, pay_provider, address, address_id)
-         VALUES (:appid, :userId, :productId, :quantity, :amount, 'unpaid', 'wechat', :address, :addressId)`,
+        `INSERT INTO orders (appid, user_id, product_id, quantity, amount, status, pay_provider, address, address_id, expires_at)
+         VALUES (:appid, :userId, :productId, :quantity, :amount, 'unpaid', 'wechat', :address, :addressId, :expiresAt)`,
         {
           appid: scopedAppId,
           userId: buyer.id,
@@ -1912,7 +2160,8 @@ function createStore(pool = createPool()) {
           quantity,
           amount,
           address: orderAddress.addressText,
-          addressId: orderAddress.addressId
+          addressId: orderAddress.addressId,
+          expiresAt: mysqlDateFromDate(expiresAt)
         }
       );
       const tradeNo = outTradeNo(result.insertId);
@@ -1939,7 +2188,8 @@ function createStore(pool = createPool()) {
         buyer,
         description: campaign ? campaign.name : product.title,
         order: orderRow(rows[0]),
-        campaign
+        campaign,
+        expiresAt
       };
     });
     let prepay;
@@ -1949,7 +2199,8 @@ function createStore(pool = createPool()) {
         description: created.description,
         amount: created.order.amount,
         openid: created.buyer.openid,
-        attach: created.campaign ? JSON.stringify({ campaign_id: created.campaign.id }) : ""
+        attach: created.campaign ? JSON.stringify({ campaign_id: created.campaign.id }) : "",
+        timeExpire: created.expiresAt
       }, tenant || { appid: scopedAppId });
     } catch (error) {
       await closeUnpaidOrder(created.order.id, scopedAppId);
@@ -2088,9 +2339,11 @@ function createStore(pool = createPool()) {
     return money(Math.max(0, Number(rows[0].gross || 0) - Number(rows[0].locked || 0)));
   }
 
-  async function listCommissions({ userId = null, appid = "" } = {}) {
+  async function listCommissions({ userId = null, appid = "", page = 1, pageSize = 100 } = {}) {
     const filters = [];
     const params = { appid: null };
+    const limit = publicListLimit(pageSize, 100, 500);
+    const offset = publicOffset(page, limit);
     if (appid) {
       filters.push("c.appid = :appid");
       params.appid = normalizeAppId(appid);
@@ -2117,6 +2370,7 @@ function createStore(pool = createPool()) {
       LEFT JOIN users b ON b.id = c.beneficiary_id AND (:appid IS NULL OR b.appid = :appid)
       ${where}
       ORDER BY c.created_at DESC, c.id DESC
+      LIMIT ${limit} OFFSET ${offset}
     `, params);
     return rows.map(commissionRow);
   }
@@ -2131,6 +2385,7 @@ function createStore(pool = createPool()) {
       FROM users u
       WHERE u.parent_id = :id AND u.appid = :appid
       ORDER BY u.created_at DESC
+      LIMIT 200
     `, { id, appid: scopedAppId });
     const [indirect] = await many(pool, `
       SELECT COUNT(*) indirect_count
@@ -2138,7 +2393,7 @@ function createStore(pool = createPool()) {
       JOIN users direct ON direct.id = child.parent_id
       WHERE direct.parent_id = :id AND child.appid = :appid AND direct.appid = :appid
     `, { id, appid: scopedAppId });
-    const commissions = await listCommissions({ userId: id, appid: scopedAppId });
+    const commissions = await listCommissions({ userId: id, appid: scopedAppId, pageSize: 100 });
     const rows = await many(pool, `
       SELECT
         COALESCE(SUM(CASE WHEN status <> 'canceled' AND DATE(created_at) = UTC_DATE() THEN amount ELSE 0 END), 0) today,
@@ -2148,7 +2403,7 @@ function createStore(pool = createPool()) {
       WHERE beneficiary_id = :id AND appid = :appid
     `, { id, appid: scopedAppId });
     const withdrawnRows = await many(pool, "SELECT COALESCE(SUM(amount), 0) withdrawn FROM withdrawals WHERE user_id = :id AND appid = :appid AND status = 'paidout'", { id, appid: scopedAppId });
-    const withdrawals = await many(pool, "SELECT * FROM withdrawals WHERE user_id = :id AND appid = :appid ORDER BY created_at DESC, id DESC", { id, appid: scopedAppId });
+    const withdrawals = await many(pool, "SELECT * FROM withdrawals WHERE user_id = :id AND appid = :appid ORDER BY created_at DESC, id DESC LIMIT 100", { id, appid: scopedAppId });
     return {
       user,
       settings: appSettings,
@@ -2304,7 +2559,7 @@ function createStore(pool = createPool()) {
       FROM orders o
       WHERE o.appid = :appid
     `, { appid: scopedAppId });
-    const recentRows = await loadOrderRows("WHERE o.appid = :appid", { appid: scopedAppId });
+    const recentRows = await loadOrderRows("WHERE o.appid = :appid", { appid: scopedAppId }, pool, { limit: 8 });
     const topRows = await many(pool, `
       SELECT u.*,
         COALESCE(SUM(CASE WHEN c.status <> 'canceled' THEN c.amount ELSE 0 END), 0) total_commission,
@@ -2338,10 +2593,11 @@ function createStore(pool = createPool()) {
       ...campaignParams,
       campaignIdForRelation: featuredCampaign ? featuredCampaign.id : 0
     };
+    const onlineWindow = onlineWindowSeconds();
     const liveCount = await one(pool, `
       SELECT COUNT(DISTINCT user_id) count
       FROM screen_heartbeats
-      WHERE last_seen_at >= UTC_TIMESTAMP() - INTERVAL 5 SECOND
+      WHERE last_seen_at >= UTC_TIMESTAMP() - INTERVAL ${onlineWindow} SECOND
         AND appid = :appid
         ${featuredCampaign ? "AND campaign_id = :campaignId" : ""}
     `, campaignParams);
@@ -2355,7 +2611,7 @@ function createStore(pool = createPool()) {
       FROM screen_heartbeats hb
       LEFT JOIN screen_heartbeats newer ON newer.user_id = hb.user_id
         AND newer.appid = :appid
-        AND newer.last_seen_at >= UTC_TIMESTAMP() - INTERVAL 5 SECOND
+        AND newer.last_seen_at >= UTC_TIMESTAMP() - INTERVAL ${onlineWindow} SECOND
         ${featuredCampaign ? "AND newer.campaign_id = :campaignId" : ""}
         AND (
           newer.last_seen_at > hb.last_seen_at
@@ -2367,7 +2623,7 @@ function createStore(pool = createPool()) {
         AND ar.campaign_id = :campaignIdForRelation
       LEFT JOIN users i ON i.id = ar.inviter_id AND i.appid = :appid
       LEFT JOIN users tl ON tl.id = ar.team_leader_id AND tl.appid = :appid
-      WHERE hb.last_seen_at >= UTC_TIMESTAMP() - INTERVAL 5 SECOND
+      WHERE hb.last_seen_at >= UTC_TIMESTAMP() - INTERVAL ${onlineWindow} SECOND
         AND hb.appid = :appid
         ${featuredCampaign ? "AND hb.campaign_id = :campaignId" : ""}
         AND newer.id IS NULL
@@ -2447,17 +2703,25 @@ function createStore(pool = createPool()) {
     `, campaignParams);
     const campaignTotals = featuredCampaign ? await one(pool, `
       SELECT
-        COUNT(DISTINCT ar.member_id) visitors,
-        COUNT(DISTINCT CASE WHEN o.status IN ('paid','shipped','received') THEN ao.order_id ELSE NULL END) order_count,
-        COUNT(DISTINCT CASE WHEN o.status IN ('paid','shipped','received') THEN o.user_id ELSE NULL END) buyer_count,
-        COALESCE(SUM(CASE WHEN o.status IN ('paid','shipped','received') THEN o.amount ELSE 0 END), 0) paid_amount,
-        COALESCE(SUM(CASE WHEN c.status <> 'canceled' THEN c.amount ELSE 0 END), 0) reward_amount
-      FROM acquisition_campaigns ac
-      LEFT JOIN acquisition_relations ar ON ar.campaign_id = ac.id AND ar.appid = :appid
-      LEFT JOIN acquisition_orders ao ON ao.campaign_id = ac.id AND ao.appid = :appid
-      LEFT JOIN orders o ON o.id = ao.order_id AND o.appid = :appid
-      LEFT JOIN commissions c ON c.order_id = ao.order_id AND c.appid = :appid
-      WHERE ac.id = :campaignId AND ac.appid = :appid
+        (SELECT COUNT(DISTINCT member_id)
+         FROM acquisition_relations
+         WHERE campaign_id = :campaignId AND appid = :appid) visitors,
+        (SELECT COUNT(DISTINCT ao.order_id)
+         FROM acquisition_orders ao
+         JOIN orders o ON o.id = ao.order_id AND o.appid = :appid
+         WHERE ao.campaign_id = :campaignId AND ao.appid = :appid AND o.status IN ('paid','shipped','received')) order_count,
+        (SELECT COUNT(DISTINCT o.user_id)
+         FROM acquisition_orders ao
+         JOIN orders o ON o.id = ao.order_id AND o.appid = :appid
+         WHERE ao.campaign_id = :campaignId AND ao.appid = :appid AND o.status IN ('paid','shipped','received')) buyer_count,
+        (SELECT COALESCE(SUM(o.amount), 0)
+         FROM acquisition_orders ao
+         JOIN orders o ON o.id = ao.order_id AND o.appid = :appid
+         WHERE ao.campaign_id = :campaignId AND ao.appid = :appid AND o.status IN ('paid','shipped','received')) paid_amount,
+        (SELECT COALESCE(SUM(c.amount), 0)
+         FROM acquisition_orders ao
+         JOIN commissions c ON c.order_id = ao.order_id AND c.appid = :appid
+         WHERE ao.campaign_id = :campaignId AND ao.appid = :appid AND c.status <> 'canceled') reward_amount
     `, campaignParams) : null;
     const totalRelationCount = await one(pool, "SELECT COUNT(*) count FROM acquisition_relations WHERE appid = :appid", { appid: scopedAppId });
     return {
@@ -2534,9 +2798,15 @@ function createStore(pool = createPool()) {
   }
 
   async function screenDashboard(appid = "") {
+    const scopedAppId = normalizeAppId(appid);
+    const ttl = screenDashboardCacheMs();
+    const cached = screenDashboardCache.get(scopedAppId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
     const data = await dashboard(appid);
     const screen = data.battle_screen || {};
-    return {
+    const value = {
       ...screen,
       title: screen.title || "必火次元作战大屏",
       online_count: Number(screen.browsing_count || 0),
@@ -2546,62 +2816,73 @@ function createStore(pool = createPool()) {
         last_seen_at: item.last_seen_at
       }))
     };
+    screenDashboardCache.set(scopedAppId, {
+      value,
+      expiresAt: Date.now() + ttl
+    });
+    return value;
   }
 
   async function screenHeartbeat(body, appid = "") {
     const scopedAppId = normalizeAppId(appid || body.appid);
-    return tx(pool, async conn => {
-      const userId = assertId(body.user_id, "用户 ID");
-      await getUser(userId, conn, scopedAppId);
-      const rawCampaignId = Number(body.campaign_id || 0);
-      const rawProductId = Number(body.product_id || 0);
-      const campaignId = Number.isInteger(rawCampaignId) && rawCampaignId > 0 ? rawCampaignId : null;
-      const productId = Number.isInteger(rawProductId) && rawProductId > 0 ? rawProductId : null;
-      if (campaignId) await getAcquisitionCampaign(campaignId, conn, scopedAppId);
-      if (productId) await getPublicProduct(productId, conn, scopedAppId);
-      const payload = {
-        appid: scopedAppId,
-        userId,
-        campaignId,
-        productId,
-        scene: cleanText(body.scene, "", 64),
-        page: cleanText(body.page, "", 40),
-        sessionKey: cleanText(body.session_key, "", 96) || heartbeatSessionKey(body)
-      };
-      await conn.query(`
-        INSERT INTO screen_heartbeats (
-          appid, user_id, campaign_id, product_id, scene, page, session_key, last_seen_at
-        )
-        VALUES (
-          :appid, :userId, :campaignId, :productId, :scene, :page, :sessionKey, UTC_TIMESTAMP()
-        )
-        ON DUPLICATE KEY UPDATE
-          user_id = VALUES(user_id),
-          campaign_id = VALUES(campaign_id),
-          product_id = VALUES(product_id),
-          scene = VALUES(scene),
-          page = VALUES(page),
-          last_seen_at = UTC_TIMESTAMP()
-      `, payload);
-      return { ok: true, online_window_seconds: 5 };
-    });
+    const userId = assertId(body.user_id, "用户 ID");
+    const rawCampaignId = Number(body.campaign_id || 0);
+    const rawProductId = Number(body.product_id || 0);
+    const campaignId = Number.isInteger(rawCampaignId) && rawCampaignId > 0 ? rawCampaignId : null;
+    const productId = Number.isInteger(rawProductId) && rawProductId > 0 ? rawProductId : null;
+    const payload = {
+      appid: scopedAppId,
+      userId,
+      campaignId,
+      productId,
+      scene: cleanText(body.scene, "", 64),
+      page: cleanText(body.page, "", 40),
+      sessionKey: cleanText(body.session_key, "", 96) || heartbeatSessionKey(body)
+    };
+    await pool.query(`
+      INSERT INTO screen_heartbeats (
+        appid, user_id, campaign_id, product_id, scene, page, session_key, last_seen_at
+      )
+      VALUES (
+        :appid, :userId, :campaignId, :productId, :scene, :page, :sessionKey, UTC_TIMESTAMP()
+      )
+      ON DUPLICATE KEY UPDATE
+        user_id = VALUES(user_id),
+        campaign_id = VALUES(campaign_id),
+        product_id = VALUES(product_id),
+        scene = VALUES(scene),
+        page = VALUES(page),
+        last_seen_at = UTC_TIMESTAMP()
+    `, payload);
+    return { ok: true, online_window_seconds: onlineWindowSeconds() };
   }
 
-  async function listDistributors(appid = "") {
+  async function listDistributors(appid = "", options = {}) {
     const scopedAppId = normalizeAppId(appid);
+    const limit = publicListLimit(options.limit || options.pageSize, 300, 500);
     const rows = await many(pool, `
       SELECT u.*,
         p.nickname parent_nickname, p.phone parent_phone, p.avatar parent_avatar,
         (SELECT COUNT(*) FROM users child WHERE child.parent_id = u.id AND child.appid = :appid) direct_count,
-        COALESCE(SUM(CASE WHEN c.status <> 'canceled' THEN c.amount ELSE 0 END), 0) total_commission
+        COALESCE(SUM(CASE WHEN c.status <> 'canceled' THEN c.amount ELSE 0 END), 0) total_commission,
+        GREATEST(
+          COALESCE(SUM(CASE WHEN c.status = 'withdrawable' THEN c.amount ELSE 0 END), 0) -
+          (
+            SELECT COALESCE(SUM(w.amount), 0)
+            FROM withdrawals w
+            WHERE w.user_id = u.id AND w.appid = :appid AND w.status <> 'rejected'
+          ),
+          0
+        ) available_balance
       FROM users u
       LEFT JOIN users p ON p.id = u.parent_id AND p.appid = :appid
       LEFT JOIN commissions c ON c.beneficiary_id = u.id AND c.appid = :appid
       WHERE u.appid = :appid
       GROUP BY u.id, p.id
       ORDER BY u.created_at DESC
+      LIMIT ${limit}
     `, { appid: scopedAppId });
-    return Promise.all(rows.map(async row => ({
+    return rows.map(row => ({
       ...normalizeUser(row),
       parent: row.parent_nickname ? {
         id: row.parent_id,
@@ -2611,8 +2892,8 @@ function createStore(pool = createPool()) {
       } : null,
       direct_count: Number(row.direct_count || 0),
       total_commission: money(row.total_commission),
-      available_balance: await userAvailableBalance(row.id, pool, row.appid)
-    })));
+      available_balance: money(row.available_balance)
+    }));
   }
 
   async function patchDistributor(userId, body, appid = "") {
@@ -2624,14 +2905,16 @@ function createStore(pool = createPool()) {
     return getUser(id, pool, scopedAppId);
   }
 
-  async function listWithdrawals(appid = "") {
+  async function listWithdrawals(appid = "", options = {}) {
     const scopedAppId = normalizeAppId(appid);
+    const limit = publicListLimit(options.limit || options.pageSize, 100, 500);
     const rows = await many(pool, `
       SELECT w.*, u.nickname user_nickname, u.phone user_phone, u.avatar user_avatar
       FROM withdrawals w
       LEFT JOIN users u ON u.id = w.user_id AND u.appid = :appid
       WHERE w.appid = :appid
       ORDER BY w.created_at DESC, w.id DESC
+      LIMIT ${limit}
     `, { appid: scopedAppId });
     return rows.map(row => ({
       id: row.id,
@@ -2717,6 +3000,8 @@ function createStore(pool = createPool()) {
     wechatLogin,
     updateUserProfile,
     getUser,
+    requireSessionUser,
+    requireSessionOrder,
     listUserAddresses,
     saveUserAddress,
     bindInviter,
@@ -2746,6 +3031,7 @@ function createStore(pool = createPool()) {
     saveAcquisitionMaterial,
     deleteAcquisitionMaterial,
     createOrder,
+    closeExpiredOrders,
     syncWechatPayment,
     closeUnpaidOrder,
     handleWechatPayNotification,

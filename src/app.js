@@ -306,6 +306,18 @@ function serveStatic(req, res, pathname, hostname = "") {
 }
 
 function createServer({ store }) {
+  function requestSessionToken(req) {
+    return (req.headers["x-mall-session"] || "").toString();
+  }
+
+  async function requireUserSession(req, tenant, userId) {
+    await store.requireSessionUser(Number(userId), requestSessionToken(req), tenant.appid);
+  }
+
+  async function requireOrderSession(req, tenant, orderId) {
+    await store.requireSessionOrder(Number(orderId), requestSessionToken(req), tenant.appid);
+  }
+
   async function handleApi(req, res, pathname, searchParams) {
     if (req.method === "GET" && pathname === "/api/health") {
       await store.ping();
@@ -359,6 +371,7 @@ function createServer({ store }) {
 
     if (req.method === "GET" && pathname === "/api/me") {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      await requireUserSession(req, tenant, searchParams.get("user_id"));
       ok(res, await store.getUser(Number(searchParams.get("user_id")), undefined, tenant.appid));
       return;
     }
@@ -366,6 +379,7 @@ function createServer({ store }) {
     if (req.method === "PATCH" && pathname === "/api/me/profile") {
       const body = await readBody(req, 8 * 1024 * 1024);
       const tenant = resolveTenantFromRequest(req, searchParams, body);
+      await requireUserSession(req, tenant, body.user_id);
       let avatar = body.avatar || body.avatar_url || "";
       if (body.avatar_data_url) {
         const uploaded = await saveUserAvatarUpload({ data_url: body.avatar_data_url }, tenant.appid);
@@ -381,6 +395,7 @@ function createServer({ store }) {
 
     if (req.method === "GET" && pathname === "/api/user/addresses") {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      await requireUserSession(req, tenant, searchParams.get("user_id"));
       ok(res, await store.listUserAddresses(Number(searchParams.get("user_id")), undefined, tenant.appid));
       return;
     }
@@ -388,6 +403,7 @@ function createServer({ store }) {
     if (req.method === "POST" && pathname === "/api/user/addresses") {
       const body = await readBody(req);
       const tenant = resolveTenantFromRequest(req, searchParams, body);
+      await requireUserSession(req, tenant, body.user_id);
       ok(res, await store.saveUserAddress(body, tenant.appid));
       return;
     }
@@ -396,6 +412,7 @@ function createServer({ store }) {
     if (req.method === "PUT" && userAddressId) {
       const body = await readBody(req);
       const tenant = resolveTenantFromRequest(req, searchParams, body);
+      await requireUserSession(req, tenant, body.user_id);
       ok(res, await store.saveUserAddress({ ...body, id: userAddressId }, tenant.appid));
       return;
     }
@@ -403,6 +420,7 @@ function createServer({ store }) {
     if (req.method === "PATCH" && pathname === "/api/me/inviter") {
       const body = await readBody(req);
       const tenant = resolveTenantFromRequest(req, searchParams, body);
+      await requireUserSession(req, tenant, body.user_id);
       ok(res, await store.bindInviter(body, tenant.appid));
       return;
     }
@@ -410,6 +428,7 @@ function createServer({ store }) {
     if (req.method === "POST" && pathname === "/api/distribution/apply") {
       const body = await readBody(req);
       const tenant = resolveTenantFromRequest(req, searchParams, body);
+      await requireUserSession(req, tenant, body.user_id);
       ok(res, await store.applyDistributor(body, tenant.appid));
       return;
     }
@@ -442,6 +461,7 @@ function createServer({ store }) {
 
     if (req.method === "GET" && pathname === "/api/acquisition/active") {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      if (searchParams.get("user_id")) await requireUserSession(req, tenant, searchParams.get("user_id"));
       ok(res, await store.getActiveAcquisitionCampaign(
         Number(searchParams.get("user_id")) || null,
         searchParams.get("scene") || "",
@@ -453,6 +473,7 @@ function createServer({ store }) {
     const publicAcquisitionId = matchId(pathname, "/api/acquisition/campaigns/");
     if (req.method === "GET" && publicAcquisitionId && pathname === `/api/acquisition/campaigns/${publicAcquisitionId}/invite-poster`) {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      await requireUserSession(req, tenant, searchParams.get("user_id"));
       ok(res, await store.campaignInvitePoster({
         campaignId: publicAcquisitionId,
         userId: Number(searchParams.get("user_id")),
@@ -463,6 +484,7 @@ function createServer({ store }) {
 
     if (req.method === "GET" && publicAcquisitionId) {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      if (searchParams.get("user_id")) await requireUserSession(req, tenant, searchParams.get("user_id"));
       ok(res, await store.getPublicAcquisitionCampaign(
         publicAcquisitionId,
         Number(searchParams.get("user_id")) || null,
@@ -475,12 +497,14 @@ function createServer({ store }) {
     if (req.method === "POST" && pathname === "/api/orders") {
       const body = await readBody(req);
       const tenant = resolveTenantFromRequest(req, searchParams, body);
+      await requireUserSession(req, tenant, body.user_id);
       ok(res, await store.createOrder(body, tenant));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/orders") {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      await requireUserSession(req, tenant, searchParams.get("user_id"));
       ok(res, await store.listOrders({ userId: Number(searchParams.get("user_id")) || null, appid: tenant.appid }));
       return;
     }
@@ -488,18 +512,21 @@ function createServer({ store }) {
     const orderId = matchId(pathname, "/api/orders/");
     if (req.method === "POST" && orderId && pathname.endsWith("/pay/sync")) {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      await requireOrderSession(req, tenant, orderId);
       ok(res, await store.syncWechatPayment(orderId, tenant));
       return;
     }
 
     if (req.method === "POST" && orderId && pathname.endsWith("/close")) {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      await requireOrderSession(req, tenant, orderId);
       ok(res, await store.closeUnpaidOrder(orderId, tenant.appid));
       return;
     }
 
     if (req.method === "POST" && orderId && pathname.endsWith("/confirm")) {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      await requireOrderSession(req, tenant, orderId);
       ok(res, await store.confirmOrder(orderId, tenant.appid));
       return;
     }
@@ -518,6 +545,7 @@ function createServer({ store }) {
 
     if (req.method === "GET" && pathname === "/api/distribution/summary") {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      await requireUserSession(req, tenant, searchParams.get("user_id"));
       ok(res, await store.distributionSummary(Number(searchParams.get("user_id")), tenant.appid));
       return;
     }
@@ -525,12 +553,14 @@ function createServer({ store }) {
     if (req.method === "POST" && pathname === "/api/withdrawals") {
       const body = await readBody(req);
       const tenant = resolveTenantFromRequest(req, searchParams, body);
+      await requireUserSession(req, tenant, body.user_id);
       ok(res, await store.createWithdrawal(body, tenant.appid));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/share-poster") {
       const tenant = resolveTenantFromRequest(req, searchParams);
+      await requireUserSession(req, tenant, searchParams.get("user_id"));
       ok(res, await store.sharePoster({
         userId: Number(searchParams.get("user_id")),
         productId: Number(searchParams.get("product_id")),
@@ -548,6 +578,7 @@ function createServer({ store }) {
     if (req.method === "POST" && pathname === "/api/screen/heartbeat") {
       const body = await readBody(req);
       const tenant = resolveTenantFromRequest(req, searchParams, body);
+      await requireUserSession(req, tenant, body.user_id);
       ok(res, await store.screenHeartbeat(body, tenant.appid));
       return;
     }

@@ -287,6 +287,7 @@ function orderRow(row) {
     address: row.address,
     address_id: row.address_id || null,
     logistics_no: row.logistics_no || "",
+    expires_at: row.expires_at || null,
     created_at: row.created_at,
     paid_at: row.paid_at,
     received_at: row.received_at,

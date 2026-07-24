@@ -5,6 +5,13 @@ const { URL } = require("url");
 const { appError } = require("./errors");
 const { defaultTenant } = require("./tenant-config");
 
+const textFileCache = new Map();
+const wechatAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: Number(process.env.WECHAT_PAY_MAX_SOCKETS || 100),
+  timeout: Number(process.env.WECHAT_PAY_SOCKET_TIMEOUT_MS || 15000)
+});
+
 function payConfig(tenant = defaultTenant()) {
   const payment = tenant?.payment || {};
   return {
@@ -36,8 +43,12 @@ function assertConfig(config = payConfig()) {
 }
 
 function readTextFile(filePath, label) {
+  const cached = textFileCache.get(filePath);
+  if (cached) return cached;
   try {
-    return fs.readFileSync(filePath, "utf8");
+    const text = fs.readFileSync(filePath, "utf8");
+    textFileCache.set(filePath, text);
+    return text;
   } catch {
     throw appError(500, `${label}读取失败`);
   }
@@ -77,6 +88,7 @@ function requestWechat(method, apiPath, body = null, tenant) {
       method,
       hostname: url.hostname,
       path: `${url.pathname}${url.search}`,
+      agent: wechatAgent,
       headers: {
         Authorization: auth.header,
         Accept: "application/json",
@@ -89,7 +101,12 @@ function requestWechat(method, apiPath, body = null, tenant) {
       res.setEncoding("utf8");
       res.on("data", chunk => { raw += chunk; });
       res.on("end", () => {
-        const payload = raw ? JSON.parse(raw) : {};
+        let payload = {};
+        try {
+          payload = raw ? JSON.parse(raw) : {};
+        } catch {
+          payload = {};
+        }
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(payload);
           return;
@@ -101,6 +118,9 @@ function requestWechat(method, apiPath, body = null, tenant) {
       });
     });
     req.on("error", reject);
+    req.setTimeout(Number(process.env.WECHAT_PAY_REQUEST_TIMEOUT_MS || 15000), () => {
+      req.destroy(appError(504, "微信支付请求超时"));
+    });
     req.end(auth.bodyText);
   });
 }
@@ -109,9 +129,16 @@ function yuanToFen(value) {
   return Math.round(Number(value || 0) * 100);
 }
 
-async function createJsapiPrepay({ outTradeNo, description, amount, openid, attach = "" }, tenant) {
+function wechatTimeExpire(value) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().replace(/\.\d{3}Z$/, "+00:00");
+}
+
+async function createJsapiPrepay({ outTradeNo, description, amount, openid, attach = "", timeExpire = null }, tenant) {
   const config = assertConfig(payConfig(tenant));
-  return requestWechat("POST", "/v3/pay/transactions/jsapi", {
+  const payload = {
     appid: config.appid,
     mchid: config.mchid,
     description: String(description || `${tenant?.name || "小程序"}订单`).slice(0, 127),
@@ -123,7 +150,10 @@ async function createJsapiPrepay({ outTradeNo, description, amount, openid, atta
     },
     payer: { openid },
     attach
-  }, tenant);
+  };
+  const expire = wechatTimeExpire(timeExpire);
+  if (expire) payload.time_expire = expire;
+  return requestWechat("POST", "/v3/pay/transactions/jsapi", payload, tenant);
 }
 
 function jsapiPayParams(prepayId, tenant) {

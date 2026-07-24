@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS app_settings (
-  id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   appid VARCHAR(32) NOT NULL DEFAULT '',
   commission_level_1 DECIMAL(5, 4) NOT NULL DEFAULT 0.1200,
   commission_level_2 DECIMAL(5, 4) NOT NULL DEFAULT 0.0500,
@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
   UNIQUE KEY uk_users_session_token (session_token),
   KEY idx_users_appid_created (appid, created_at),
   KEY idx_users_parent (parent_id),
+  KEY idx_users_app_parent (appid, parent_id, id),
   KEY idx_users_first_parent (first_parent_id),
   KEY idx_users_distributor_status (distributor_status),
   CONSTRAINT fk_users_parent FOREIGN KEY (parent_id) REFERENCES users(id) ON DELETE SET NULL,
@@ -259,6 +260,7 @@ CREATE TABLE IF NOT EXISTS orders (
   address VARCHAR(255) NOT NULL DEFAULT '',
   address_id BIGINT UNSIGNED NULL,
   logistics_no VARCHAR(80) NOT NULL DEFAULT '',
+  expires_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   paid_at TIMESTAMP NULL DEFAULT NULL,
   received_at TIMESTAMP NULL DEFAULT NULL,
@@ -267,6 +269,8 @@ CREATE TABLE IF NOT EXISTS orders (
   KEY idx_orders_transaction (transaction_id),
   KEY idx_orders_app_user_created (appid, user_id, created_at),
   KEY idx_orders_app_status_created (appid, status, created_at),
+  KEY idx_orders_app_status_expires (appid, status, expires_at, id),
+  KEY idx_orders_app_user_status_expires (appid, user_id, status, expires_at),
   KEY idx_orders_user_created (user_id, created_at),
   KEY idx_orders_status_created (status, created_at),
   KEY idx_orders_product (product_id),
@@ -290,6 +294,7 @@ CREATE TABLE IF NOT EXISTS acquisition_orders (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_acquisition_order (order_id),
   KEY idx_acquisition_orders_campaign (appid, campaign_id, created_at),
+  KEY idx_acquisition_orders_campaign_order (appid, campaign_id, order_id),
   KEY idx_acquisition_orders_inviter (appid, campaign_id, inviter_id),
   CONSTRAINT fk_acq_orders_campaign FOREIGN KEY (campaign_id) REFERENCES acquisition_campaigns(id) ON DELETE CASCADE,
   CONSTRAINT fk_acq_orders_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
@@ -313,10 +318,27 @@ CREATE TABLE IF NOT EXISTS acquisition_lottery_records (
   status ENUM('pending','issued','failed') NOT NULL DEFAULT 'pending',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_lottery_campaign_created (appid, campaign_id, created_at),
+  KEY idx_lottery_campaign_prize (appid, campaign_id, prize_type, prize_name, status),
   KEY idx_lottery_user (appid, user_id, created_at),
   CONSTRAINT fk_lottery_campaign FOREIGN KEY (campaign_id) REFERENCES acquisition_campaigns(id) ON DELETE CASCADE,
   CONSTRAINT fk_lottery_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
   CONSTRAINT fk_lottery_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS acquisition_lottery_prize_stocks (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  appid VARCHAR(32) NOT NULL DEFAULT '',
+  campaign_id BIGINT UNSIGNED NOT NULL,
+  prize_key VARCHAR(64) NOT NULL,
+  prize_name VARCHAR(120) NOT NULL DEFAULT '',
+  prize_type ENUM('thanks','cash','goods','coupon') NOT NULL DEFAULT 'thanks',
+  stock_total INT UNSIGNED NOT NULL DEFAULT 0,
+  stock_used INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_lottery_prize_stock (appid, campaign_id, prize_key),
+  KEY idx_lottery_prize_stock_campaign (appid, campaign_id),
+  CONSTRAINT fk_lottery_prize_stock_campaign FOREIGN KEY (campaign_id) REFERENCES acquisition_campaigns(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS commissions (
@@ -333,6 +355,8 @@ CREATE TABLE IF NOT EXISTS commissions (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_commissions_order_beneficiary_level (order_id, beneficiary_id, level),
   KEY idx_commissions_beneficiary_status (appid, beneficiary_id, status),
+  KEY idx_commissions_app_order_status (appid, order_id, status),
+  KEY idx_commissions_app_created (appid, created_at),
   KEY idx_commissions_buyer (appid, buyer_id),
   CONSTRAINT fk_commissions_order FOREIGN KEY (order_id) REFERENCES orders(id),
   CONSTRAINT fk_commissions_beneficiary FOREIGN KEY (beneficiary_id) REFERENCES users(id),
