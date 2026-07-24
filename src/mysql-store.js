@@ -615,14 +615,22 @@ function createStore(pool = createPool()) {
     });
   }
 
+  async function approveDistributorIfNeeded(conn, userId, appid = "") {
+    const id = Number(userId || 0);
+    if (!id) return null;
+    const scopedAppId = normalizeAppId(appid);
+    await conn.query(
+      "UPDATE users SET distributor_status = 'approved' WHERE id = :id AND appid = :appid AND distributor_status <> 'approved'",
+      { id, appid: scopedAppId }
+    );
+    return getUser(id, conn, scopedAppId);
+  }
+
   async function applyDistributor(body, appid = "") {
     const scopedAppId = normalizeAppId(appid || body.appid);
     return tx(pool, async conn => {
       const user = await getUser(Number(body.user_id), conn, scopedAppId);
-      if (user.distributor_status !== "approved") {
-        await conn.query("UPDATE users SET distributor_status = 'pending' WHERE id = :id AND appid = :appid", { id: user.id, appid: scopedAppId });
-      }
-      return getUser(user.id, conn, scopedAppId);
+      return approveDistributorIfNeeded(conn, user.id, scopedAppId);
     });
   }
 
@@ -1332,8 +1340,9 @@ function createStore(pool = createPool()) {
     if (!buyer.parent_id) return [];
     const appSettings = await settings(conn, scopedAppId);
     const created = [];
-    const parent = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid AND distributor_status = 'approved'", { id: buyer.parent_id, appid: scopedAppId });
+    const parent = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid", { id: buyer.parent_id, appid: scopedAppId });
     if (parent) {
+      await approveDistributorIfNeeded(conn, parent.id, scopedAppId);
       const amount = money(order.amount * Number(product.commission_rate || appSettings.commission_level_1));
       const [result] = await conn.query(
         `INSERT INTO commissions (appid, order_id, beneficiary_id, buyer_id, level, amount, status)
@@ -1343,8 +1352,9 @@ function createStore(pool = createPool()) {
       created.push({ id: result.insertId, appid: scopedAppId, order_id: order.id, beneficiary_id: parent.id, buyer_id: buyer.id, level: 1, amount, status: "pending" });
     }
     if (parent && parent.parent_id) {
-      const grandParent = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid AND distributor_status = 'approved'", { id: parent.parent_id, appid: scopedAppId });
+      const grandParent = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid", { id: parent.parent_id, appid: scopedAppId });
       if (grandParent) {
+        await approveDistributorIfNeeded(conn, grandParent.id, scopedAppId);
         const amount = money(order.amount * Number(appSettings.commission_level_2 || 0));
         const [result] = await conn.query(
           `INSERT INTO commissions (appid, order_id, beneficiary_id, buyer_id, level, amount, status)
@@ -1374,7 +1384,9 @@ function createStore(pool = createPool()) {
       inviterId = member.first_parent_id || member.parent_id || campaign.default_inviter_id || null;
       lockedBy = "system";
     } else if (campaign.relation_mode === "activity_visit" || lockReason === "paid") {
-      inviterId = sceneInviter && sceneInviter !== memberId ? sceneInviter : (campaign.default_inviter_id || null);
+      inviterId = sceneInviter && sceneInviter !== memberId
+        ? sceneInviter
+        : (member.parent_id || campaign.default_inviter_id || null);
       lockedBy = lockReason === "paid" ? "paid" : "visit";
     }
 
@@ -1408,9 +1420,10 @@ function createStore(pool = createPool()) {
       campaignId: campaign.id,
       memberId
     });
-    if (existing && (campaign.relation_mode === "activity_visit" || campaign.relation_mode === "activity_paid")) return existing;
-
     const relation = await acquisitionRelationSnapshot(conn, campaign, memberId, scene, lockReason, scopedAppId);
+    if (existing && (campaign.relation_mode === "activity_visit" || campaign.relation_mode === "activity_paid") && (existing.inviter_id || !relation.inviter_id)) {
+      return existing;
+    }
     if (existing) {
       await conn.query(
         `UPDATE acquisition_relations
@@ -1524,6 +1537,7 @@ function createStore(pool = createPool()) {
   async function insertAcquisitionCommission(conn, order, buyer, campaign, reward) {
     const scopedAppId = normalizeAppId(order.appid || buyer.appid || campaign.appid);
     if (!reward.userId || money(reward.amount) <= 0) return null;
+    await approveDistributorIfNeeded(conn, reward.userId, scopedAppId);
     const allowed = await canReceiveAcquisitionReward(conn, campaign, reward.userId, {
       buyerId: buyer.id,
       teamReward: reward.teamReward,
@@ -1777,6 +1791,8 @@ function createStore(pool = createPool()) {
     if (order.status !== "unpaid") throw appError(409, "订单状态不能支付");
     const buyer = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid FOR UPDATE", { id: order.user_id, appid: scopedAppId });
     if (!buyer) throw appError(404, "用户不存在");
+    await approveDistributorIfNeeded(conn, buyer.id, scopedAppId);
+    buyer.distributor_status = "approved";
     const product = await one(conn, "SELECT * FROM products WHERE id = :id AND appid = :appid", { id: order.product_id, appid: scopedAppId });
     if (!product) throw appError(404, "商品不存在");
     const meta = await acquisitionOrderMeta(conn, order.id);
@@ -1789,6 +1805,8 @@ function createStore(pool = createPool()) {
       if (!row) throw appError(404, "拓客宝活动不存在");
       campaign = campaignRow(row);
       relation = await lockAcquisitionRelation(conn, campaign, buyer.id, meta.scene, "paid", scopedAppId);
+      await approveDistributorIfNeeded(conn, relation?.inviter_id, scopedAppId);
+      await approveDistributorIfNeeded(conn, relation?.parent_inviter_id, scopedAppId);
       await conn.query(`
         UPDATE acquisition_orders
         SET inviter_id = :inviterId,
@@ -1841,6 +1859,8 @@ function createStore(pool = createPool()) {
       const quantity = Math.max(1, Math.min(99, Number(body.quantity || 1)));
       const buyer = await one(conn, "SELECT * FROM users WHERE id = :id AND appid = :appid FOR UPDATE", { id: userId, appid: scopedAppId });
       if (!buyer) throw appError(404, "用户不存在");
+      await approveDistributorIfNeeded(conn, buyer.id, scopedAppId);
+      buyer.distributor_status = "approved";
       let productId = campaignId ? Number(body.product_id || 0) : assertId(body.product_id, "商品 ID");
       let campaign = null;
       if (campaignId) {
