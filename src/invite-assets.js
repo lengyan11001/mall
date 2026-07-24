@@ -192,7 +192,7 @@ function normalizeOverlayPosterLayout(layout = {}) {
       size: clampNumber(layout.avatar?.size, 0.04, 0.22, defaults.avatar.size)
     },
     nickname: {
-      x: clampNumber(layout.nickname?.x, 0, 0.98, defaults.nickname.x),
+      x: clampNumber(layout.nickname?.x, -0.85, 0.98, defaults.nickname.x),
       y: clampNumber(layout.nickname?.y, 0, 0.98, defaults.nickname.y),
       width: clampNumber(layout.nickname?.width, 0.08, 0.85, defaults.nickname.width),
       font_size: clampNumber(layout.nickname?.font_size, 0.016, 0.08, defaults.nickname.font_size),

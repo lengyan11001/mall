@@ -889,7 +889,7 @@ function normalizePosterLayout(layout = {}) {
       size: clamp(numberValue(layout.avatar?.size, defaults.avatar.size), 0.04, 0.22)
     },
     nickname: {
-      x: clamp(numberValue(layout.nickname?.x, defaults.nickname.x), 0, 0.98),
+      x: clamp(numberValue(layout.nickname?.x, defaults.nickname.x), -0.85, 0.98),
       y: clamp(numberValue(layout.nickname?.y, defaults.nickname.y), 0, 0.98),
       width: clamp(numberValue(layout.nickname?.width, defaults.nickname.width), 0.08, 0.85),
       font_size: clamp(numberValue(layout.nickname?.font_size, defaults.nickname.font_size), 0.016, 0.08),
@@ -1109,12 +1109,14 @@ function compactNicknameBox(layout, stageWidth, text = posterNicknamePreviewText
   const fontSize = Math.max(1, nickname.font_size * stageWidth);
   const textWidth = Math.max(fontSize * 1.8, estimatedLayoutTextWidth(text, fontSize) + Math.max(8, fontSize * 0.28));
   const width = clamp(textWidth, Math.min(maxWidth, fontSize * 1.8), maxWidth);
-  let left = nickname.x * stageWidth;
-  if (nickname.align === "right") left = left + maxWidth - width;
-  if (nickname.align === "center") left = left + (maxWidth - width) / 2;
+  let offset = 0;
+  if (nickname.align === "right") offset = maxWidth - width;
+  if (nickname.align === "center") offset = (maxWidth - width) / 2;
+  const left = nickname.x * stageWidth + offset;
   return {
     left: clamp(left, 0, Math.max(0, stageWidth - width)),
-    width
+    width,
+    offset
   };
 }
 
@@ -1266,11 +1268,16 @@ function movePosterLayoutDrag(event) {
   if (!drag || !adminState.posterLayout) return;
   const { width, height } = layoutStageSize();
   const part = adminState.posterLayout[drag.selected];
-  const itemWidth = drag.selected === "nickname" ? compactNicknameBox(adminState.posterLayout, width).width : (part.size || 0.1) * width;
+  const nicknameBox = drag.selected === "nickname" ? compactNicknameBox(adminState.posterLayout, width) : null;
+  const itemWidth = drag.selected === "nickname" ? nicknameBox.width : (part.size || 0.1) * width;
   const itemHeight = drag.selected === "nickname" ? Math.max(24, (part.font_size || 0.032) * width * 1.2) : (part.size || 0.1) * width;
   const nextX = drag.x + (event.clientX - drag.startX) / width;
   const nextY = drag.y + (event.clientY - drag.startY) / height;
-  part.x = clamp(nextX, 0, Math.max(0, 1 - itemWidth / width));
+  const minX = drag.selected === "nickname" ? -(nicknameBox.offset || 0) / width : 0;
+  const maxX = drag.selected === "nickname"
+    ? (width - itemWidth - (nicknameBox.offset || 0)) / width
+    : Math.max(0, 1 - itemWidth / width);
+  part.x = clamp(nextX, minX, Math.max(minX, maxX));
   part.y = clamp(nextY, 0, Math.max(0, 1 - itemHeight / height));
   renderPosterLayoutStage();
 }
