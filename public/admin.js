@@ -1079,6 +1079,18 @@ function layoutStageSize() {
   };
 }
 
+function fitPosterLayoutStage() {
+  const wrap = $(".poster-layout-stage-wrap");
+  const stage = $("#poster-layout-stage");
+  const image = $("#poster-layout-image");
+  if (!wrap || !stage || !image || !image.naturalWidth || !image.naturalHeight) return;
+  const availableWidth = Math.max(240, wrap.clientWidth - 20);
+  const availableHeight = Math.max(260, wrap.clientHeight - 20);
+  const aspect = image.naturalWidth / image.naturalHeight;
+  const width = Math.min(availableWidth, availableHeight * aspect, image.naturalWidth);
+  stage.style.width = `${Math.floor(width)}px`;
+}
+
 function currentLayoutPart() {
   const selected = adminState.posterLayoutSelected || "qr";
   return adminState.posterLayout?.[selected] || null;
@@ -1116,6 +1128,7 @@ function syncPosterLayoutControls() {
 function renderPosterLayoutStage() {
   const layout = normalizePosterLayout(adminState.posterLayout || defaultPosterLayout());
   adminState.posterLayout = layout;
+  fitPosterLayoutStage();
   const { width, height } = layoutStageSize();
   const qr = $("#poster-layout-stage [data-layout-item='qr']");
   const avatar = $("#poster-layout-stage [data-layout-item='avatar']");
@@ -1159,10 +1172,10 @@ function openPosterLayout(button) {
   const modal = $("#poster-layout-modal");
   const image = $("#poster-layout-image");
   image.src = imageUrl;
-  image.onload = renderPosterLayoutStage;
+  image.onload = () => requestAnimationFrame(renderPosterLayoutStage);
   modal.classList.remove("hidden");
   modal.classList.add("open");
-  renderPosterLayoutStage();
+  requestAnimationFrame(renderPosterLayoutStage);
 }
 
 function closePosterLayout() {
