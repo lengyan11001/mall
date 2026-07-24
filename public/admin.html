@@ -720,6 +720,13 @@
                 <input id="setting-auto-pay" type="checkbox" style="width:18px; height:18px;" />
                 <span>提现审核通过后直接标记为已打款（模拟企业付款到零钱）</span>
               </label>
+              <div class="field wide">
+                <span>大屏背景音频</span>
+                <div class="image-upload-row">
+                  <input class="input" id="setting-screen-audio" placeholder="上传音频后自动生成链接，也可以粘贴音频链接" />
+                  <button class="btn ghost compact" type="button" data-upload-target="#setting-screen-audio" data-upload-kind="audio" data-upload-label="上传音频">上传音频</button>
+                </div>
+              </div>
             </div>
             <div style="margin-top:14px;">
               <button class="btn" id="save-settings"><span class="slot-icon" data-icon="check"></span> 保存设置</button>
@@ -789,7 +796,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="/icons.js?v=20260613-screen1"></script>
-    <script src="/admin.js?v=20260724-screen-appid-link"></script>
+    <script src="/admin.js?v=20260724-screen-layout-audio"></script>
   </body>
 </html>
 

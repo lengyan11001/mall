@@ -6,41 +6,48 @@
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>必火次元作战大屏</title>
-    <link rel="stylesheet" href="/styles.css?v=20260613-screen3" />
+    <title>作战大屏</title>
+    <link rel="stylesheet" href="/styles.css?v=20260724-screen-layout-audio" />
   </head>
   <body class="screen-body">
     <main class="public-screen">
       <div class="battle-screen">
         <div class="battle-frame battle-frame-top"></div>
         <div class="battle-frame battle-frame-bottom"></div>
+        <div class="screen-tools">
+          <button class="screen-tool hidden" id="screen-audio-toggle" type="button" aria-label="播放背景音频">♪</button>
+          <button class="screen-tool" id="screen-fullscreen" type="button" aria-label="全屏">⛶</button>
+        </div>
         <header class="battle-title">
-          <h2 id="battle-title">活动作战大屏</h2>
+          <h1 id="battle-title">活动作战大屏</h1>
         </header>
         <section class="battle-layout">
           <aside class="battle-left">
             <div class="battle-panel battle-kpi">
               <h3 id="battle-campaign-name">必火次元</h3>
               <div class="battle-countdown">
-                <span>倒计时</span>
-                <strong id="battle-countdown">00天 00:00:00</strong>
+                <span>倒计时:</span>
+                <strong id="battle-countdown">00天00:00:00</strong>
               </div>
-              <div class="battle-stats" id="battle-stats"></div>
-              <div class="battle-core">
-                <div class="battle-orbit">
-                  <span></span>
-                  <strong>快</strong>
+              <div class="battle-kpi-grid">
+                <div class="battle-stats battle-stats-left" id="battle-stats-left"></div>
+                <div class="battle-core">
+                  <div class="battle-orbit">
+                    <span></span>
+                    <strong>V</strong>
+                  </div>
                 </div>
+                <div class="battle-stats battle-stats-right" id="battle-stats-right"></div>
               </div>
             </div>
-            <div class="battle-panel">
+            <div class="battle-panel battle-split-panel">
               <div class="battle-panel-title">裂变分析</div>
               <div class="battle-bars" id="battle-split-analysis"></div>
             </div>
           </aside>
           <main class="battle-center">
             <div class="battle-panel">
-              <div class="battle-panel-title" id="battle-entry-title">实时在线</div>
+              <div class="battle-panel-title" id="battle-entry-title">正在浏览</div>
               <div class="battle-table battle-live" id="battle-recent-entries"></div>
             </div>
             <div class="battle-panel">
@@ -59,8 +66,9 @@
             </div>
           </aside>
         </section>
+        <audio id="screen-audio" autoplay loop preload="auto"></audio>
       </div>
     </main>
-    <script src="/screen.js?v=20260613-screen3"></script>
+    <script src="/screen.js?v=20260724-screen-layout-audio"></script>
   </body>
 </html>

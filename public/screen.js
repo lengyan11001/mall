@@ -1,7 +1,12 @@
 const $ = selector => document.querySelector(selector);
 
+const screenState = {
+  audioUrl: "",
+  audioManuallyPaused: false
+};
+
 function formatMoney(value) {
-  return `¥${Number(value || 0).toFixed(2)}`;
+  return Number(value || 0).toFixed(2);
 }
 
 function escapeHtml(value) {
@@ -30,15 +35,25 @@ function countdownLabel(value) {
   const hours = Math.floor((remaining % 86400000) / 3600000);
   const minutes = Math.floor((remaining % 3600000) / 60000);
   const seconds = Math.floor((remaining % 60000) / 1000);
-  return `${String(days).padStart(2, "0")}天 ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return `${String(days).padStart(2, "0")}天${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function avatarNode(user = {}) {
   if (user.avatar && /^https?:\/\//.test(user.avatar)) {
     return `<img src="${escapeHtml(user.avatar)}" alt="${escapeHtml(user.nickname || "用户")}" />`;
   }
-  const text = Array.from(user.nickname || user.avatar || "快").slice(0, 1).join("") || "快";
+  const text = Array.from(user.nickname || user.avatar || "访").slice(0, 1).join("") || "访";
   return `<span>${escapeHtml(text)}</span>`;
+}
+
+function resolveAssetUrl(url) {
+  const source = String(url || "").trim();
+  if (!source) return "";
+  try {
+    return new URL(source, window.location.origin).href;
+  } catch {
+    return source;
+  }
 }
 
 async function api(path) {
@@ -48,34 +63,109 @@ async function api(path) {
   return payload.data;
 }
 
-function renderScreen(screen) {
-  const campaign = screen.campaign || {};
-  window.currentScreenCountdownTo = screen.countdown_to || null;
-  $("#battle-title").textContent = screen.title || "必火次元作战大屏";
-  $("#battle-campaign-name").textContent = campaign.name || "全店经营数据";
-  $("#battle-countdown").textContent = countdownLabel(screen.countdown_to);
-  $("#battle-entry-title").textContent = `实时在线(${screen.online_count || 0}人)`;
-  $("#battle-order-title").textContent = `最近下单(${screen.order_count || 0}人)`;
-
-  $("#battle-stats").innerHTML = [
-    ["浏览量", screen.browse_count || 0],
-    ["分享人数", screen.share_count || 0],
-    ["浏览人数", screen.visitor_count || 0],
-    ["获客数量", screen.award_count || 0],
-    ["下单数量", screen.order_count || 0],
-    ["抽奖奖励", formatMoney(screen.lottery_reward || 0)],
-    ["下单人数", screen.buyer_count || 0],
-    ["推广奖励", formatMoney(screen.promotion_reward || 0)]
-  ].map(([label, value]) => `
+function renderStats(target, rows) {
+  target.innerHTML = rows.map(([label, value]) => `
     <div>
-      <span>${escapeHtml(label)}</span>
+      <span>${escapeHtml(label)}:</span>
       <strong>${escapeHtml(value)}</strong>
     </div>
   `).join("");
+}
+
+function setAudioButtonState(playing) {
+  const button = $("#screen-audio-toggle");
+  if (!button) return;
+  button.classList.toggle("playing", Boolean(playing));
+  button.setAttribute("aria-label", playing ? "暂停背景音频" : "播放背景音频");
+}
+
+async function playScreenAudio() {
+  const audio = $("#screen-audio");
+  const button = $("#screen-audio-toggle");
+  if (!audio || !screenState.audioUrl) return;
+  button?.classList.remove("hidden");
+  try {
+    await audio.play();
+    setAudioButtonState(true);
+  } catch {
+    setAudioButtonState(false);
+  }
+}
+
+function applyScreenAudio(url) {
+  const audio = $("#screen-audio");
+  const button = $("#screen-audio-toggle");
+  const nextUrl = resolveAssetUrl(url);
+  if (!audio || !button) return;
+  if (!nextUrl) {
+    audio.removeAttribute("src");
+    screenState.audioUrl = "";
+    button.classList.add("hidden");
+    return;
+  }
+  button.classList.remove("hidden");
+  if (screenState.audioUrl !== nextUrl) {
+    screenState.audioUrl = nextUrl;
+    audio.src = nextUrl;
+    audio.volume = 0.62;
+    audio.load();
+    screenState.audioManuallyPaused = false;
+  }
+  if (!screenState.audioManuallyPaused && audio.paused) {
+    playScreenAudio();
+  }
+}
+
+function initScreenControls() {
+  const audio = $("#screen-audio");
+  const audioButton = $("#screen-audio-toggle");
+  audioButton?.addEventListener("click", () => {
+    if (!audio || !screenState.audioUrl) return;
+    if (audio.paused) {
+      screenState.audioManuallyPaused = false;
+      playScreenAudio();
+    } else {
+      screenState.audioManuallyPaused = true;
+      audio.pause();
+      setAudioButtonState(false);
+    }
+  });
+  audio?.addEventListener("play", () => setAudioButtonState(true));
+  audio?.addEventListener("pause", () => setAudioButtonState(false));
+  $("#screen-fullscreen")?.addEventListener("click", () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+      return;
+    }
+    document.documentElement.requestFullscreen?.();
+  });
+}
+
+function renderScreen(screen) {
+  const campaign = screen.campaign || {};
+  window.currentScreenCountdownTo = screen.countdown_to || null;
+  $("#battle-title").textContent = screen.title || "活动作战大屏";
+  $("#battle-campaign-name").textContent = campaign.name || "全店经营数据";
+  $("#battle-countdown").textContent = countdownLabel(screen.countdown_to);
+  $("#battle-entry-title").textContent = `正在浏览(${screen.online_count || 0}人)`;
+  $("#battle-order-title").textContent = `最近下单(${screen.order_count || 0}人)`;
+
+  const stats = [
+    ["浏览量", screen.browse_count || 0],
+    ["浏览人数", screen.visitor_count || 0],
+    ["下单数量", screen.order_count || 0],
+    ["下单人数", screen.buyer_count || 0],
+    ["分享人数", screen.share_count || 0],
+    ["获客数量", screen.award_count || 0],
+    ["抽奖奖励", formatMoney(screen.lottery_reward || 0)],
+    ["推广奖励", formatMoney(screen.promotion_reward || 0)]
+  ];
+  renderStats($("#battle-stats-left"), stats.slice(0, 4));
+  renderStats($("#battle-stats-right"), stats.slice(4));
 
   const entries = screen.online_users || [];
   $("#battle-recent-entries").innerHTML = `
-    <div class="battle-table-head"><span>会员昵称</span><span>邀请人</span><span>所属战队</span><span>最后心跳</span></div>
+    <div class="battle-table-head"><span>会员昵称</span><span>邀请人</span><span>所属团队</span><span>最后心跳</span></div>
     ${entries.length ? entries.map(row => `
       <div class="battle-table-row">
         <span class="battle-user"><i>${avatarNode(row.member)}</i>${escapeHtml(row.member?.nickname || "-")}</span>
@@ -88,7 +178,7 @@ function renderScreen(screen) {
 
   const orders = screen.recent_orders || [];
   $("#battle-recent-orders").innerHTML = `
-    <div class="battle-table-head"><span>会员昵称</span><span>邀请人</span><span>所属战队</span><span>下单时间</span></div>
+    <div class="battle-table-head"><span>会员昵称</span><span>邀请人</span><span>所属团队</span><span>下单时间</span></div>
     ${orders.length ? orders.map(row => `
       <div class="battle-table-row">
         <span class="battle-user"><i>${avatarNode({ nickname: row.member, avatar: row.avatar })}</i>${escapeHtml(row.member || "-")}</span>
@@ -126,6 +216,8 @@ function renderScreen(screen) {
       <em>${row.count}</em>
     </div>
   `).join("") : '<div class="battle-empty">暂无裂变数据</div>';
+
+  applyScreenAudio(screen.audio_url);
 }
 
 async function loadScreen() {
@@ -133,6 +225,8 @@ async function loadScreen() {
   const screen = await api(`/api/screen/dashboard${query.toString() ? `?${query.toString()}` : ""}`);
   renderScreen(screen);
 }
+
+initScreenControls();
 
 loadScreen().catch(error => {
   document.body.innerHTML = `<div class="screen-error">${escapeHtml(error.message)}</div>`;

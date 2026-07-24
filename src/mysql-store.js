@@ -116,7 +116,8 @@ function normalizeSettings(row) {
     commission_level_2: Number(row.commission_level_2),
     min_withdrawal: Number(row.min_withdrawal),
     compliance_name: row.compliance_name,
-    auto_pay_enabled: Boolean(row.auto_pay_enabled)
+    auto_pay_enabled: Boolean(row.auto_pay_enabled),
+    screen_audio_url: row.screen_audio_url || ""
   };
 }
 
@@ -323,9 +324,9 @@ function createStore(pool = createPool()) {
       const nextId = await one(conn, "SELECT COALESCE(MAX(id), 0) + 1 id FROM app_settings");
       await conn.query(
         `INSERT INTO app_settings (
-          id, appid, commission_level_1, commission_level_2, min_withdrawal, compliance_name, auto_pay_enabled
+          id, appid, commission_level_1, commission_level_2, min_withdrawal, compliance_name, auto_pay_enabled, screen_audio_url
         ) VALUES (
-          :id, :appid, :level1, :level2, :minWithdrawal, :complianceName, :autoPayEnabled
+          :id, :appid, :level1, :level2, :minWithdrawal, :complianceName, :autoPayEnabled, :screenAudioUrl
         )`,
         {
           id: Number(nextId?.id || 1),
@@ -334,7 +335,8 @@ function createStore(pool = createPool()) {
           level2: Number(fallback?.commission_level_2 ?? 0.05),
           minWithdrawal: Number(fallback?.min_withdrawal ?? 10),
           complianceName: String(fallback?.compliance_name || "Invite").slice(0, 20),
-          autoPayEnabled: Boolean(fallback?.auto_pay_enabled)
+          autoPayEnabled: Boolean(fallback?.auto_pay_enabled),
+          screenAudioUrl: String(fallback?.screen_audio_url || "")
         }
       );
       row = await one(conn, "SELECT * FROM app_settings WHERE appid = :appid", { appid: scopedAppId });
@@ -2289,6 +2291,7 @@ function createStore(pool = createPool()) {
 
   async function dashboard(appid = "") {
     const scopedAppId = normalizeAppId(appid);
+    const appSettings = await settings(pool, scopedAppId);
     const metrics = await one(pool, `
       SELECT
         COALESCE(SUM(CASE WHEN o.status IN ('paid','shipped','received') THEN o.amount ELSE 0 END), 0) sales,
@@ -2474,6 +2477,7 @@ function createStore(pool = createPool()) {
       battle_screen: {
         title: featuredCampaign ? `${featuredCampaign.name} 作战大屏` : "必火次元作战大屏",
         campaign: featuredCampaign,
+        audio_url: appSettings.screen_audio_url || featuredCampaign?.background_music || "",
         countdown_to: featuredCampaign ? featuredCampaign.end_at : null,
         browsing_count: Number(liveCount?.count || 0),
         browse_count: Number(campaignTotals?.visitors || 0) + Number(featuredCampaign?.virtual_browse_count || 0),
@@ -2686,7 +2690,7 @@ function createStore(pool = createPool()) {
     await pool.query(
       `UPDATE app_settings
        SET commission_level_1 = :level1, commission_level_2 = :level2, min_withdrawal = :minWithdrawal,
-           compliance_name = :complianceName, auto_pay_enabled = :autoPayEnabled
+           compliance_name = :complianceName, auto_pay_enabled = :autoPayEnabled, screen_audio_url = :screenAudioUrl
        WHERE appid = :appid`,
       {
         appid: scopedAppId,
@@ -2694,7 +2698,8 @@ function createStore(pool = createPool()) {
         level2: Number(body.commission_level_2),
         minWithdrawal: Number(body.min_withdrawal),
         complianceName: String(body.compliance_name || "推荐有礼").trim().slice(0, 20),
-        autoPayEnabled: Boolean(body.auto_pay_enabled)
+        autoPayEnabled: Boolean(body.auto_pay_enabled),
+        screenAudioUrl: cleanText(body.screen_audio_url, "", 600)
       }
     );
     return settings(pool, scopedAppId);

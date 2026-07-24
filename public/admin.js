@@ -683,6 +683,7 @@ function renderSettings() {
   $("#setting-min-withdrawal").value = settings.min_withdrawal;
   $("#setting-compliance-name").value = settings.compliance_name;
   $("#setting-auto-pay").checked = Boolean(settings.auto_pay_enabled);
+  $("#setting-screen-audio").value = settings.screen_audio_url || "";
 }
 
 function setProductSection(section) {
@@ -1700,7 +1701,8 @@ async function saveSettings() {
       commission_level_2: Number($("#setting-level2").value),
       min_withdrawal: Number($("#setting-min-withdrawal").value),
       compliance_name: $("#setting-compliance-name").value,
-      auto_pay_enabled: $("#setting-auto-pay").checked
+      auto_pay_enabled: $("#setting-auto-pay").checked,
+      screen_audio_url: $("#setting-screen-audio").value.trim()
     })
   });
   toast("设置已保存");

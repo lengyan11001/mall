@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
   min_withdrawal DECIMAL(10, 2) NOT NULL DEFAULT 10.00,
   compliance_name VARCHAR(20) NOT NULL DEFAULT '推荐有礼',
   auto_pay_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  screen_audio_url VARCHAR(600) NOT NULL DEFAULT '',
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_app_settings_appid (appid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

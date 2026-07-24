@@ -84,6 +84,7 @@ async function migrateTenancy(conn) {
 
   await addIndexIfMissing(conn, "acquisition_materials", "idx_materials_app_type_sort", "KEY idx_materials_app_type_sort (appid, type, sort_order, id)");
 
+  await addColumnIfMissing(conn, "app_settings", "screen_audio_url", "VARCHAR(600) NOT NULL DEFAULT ''");
   await addIndexIfMissing(conn, "app_settings", "uk_app_settings_appid", "UNIQUE KEY uk_app_settings_appid (appid)");
 
   await addIndexIfMissing(conn, "orders", "idx_orders_app_user_created", "KEY idx_orders_app_user_created (appid, user_id, created_at)");
