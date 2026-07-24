@@ -32,14 +32,32 @@ const {
   statusText
 } = require("./format");
 
-function dbConfig({ withoutDatabase = false } = {}) {
+function positiveInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
+function resolveConnectionLimit(override) {
+  const perWorker = positiveInteger(process.env.DB_CONNECTION_LIMIT_PER_WORKER, 0);
+  if (perWorker) return perWorker;
+  if (override) return positiveInteger(override, 40);
+
+  const configuredLimit = positiveInteger(process.env.DB_CONNECTION_LIMIT, 40);
+  const totalLimit = positiveInteger(process.env.DB_TOTAL_CONNECTION_LIMIT, configuredLimit);
+  const workers = positiveInteger(process.env.MALL_CLUSTER_WORKERS, 1);
+  if (workers <= 1) return configuredLimit;
+
+  return Math.max(2, Math.floor(totalLimit / workers));
+}
+
+function dbConfig({ withoutDatabase = false, connectionLimit = 0 } = {}) {
   const config = {
     host: process.env.DB_HOST || "127.0.0.1",
     port: Number(process.env.DB_PORT || 3306),
     user: process.env.DB_USER || "mall",
     password: process.env.DB_PASSWORD || "",
     waitForConnections: true,
-    connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 40),
+    connectionLimit: resolveConnectionLimit(connectionLimit),
     queueLimit: 0,
     charset: "utf8mb4",
     decimalNumbers: true,

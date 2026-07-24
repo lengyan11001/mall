@@ -6,6 +6,7 @@ After=network.target mysql.service
 Type=simple
 WorkingDirectory=/opt/mall
 Environment=NODE_ENV=production
+Environment=APP_WORKERS=1
 ExecStart=/usr/bin/node /opt/mall/server.js
 Restart=always
 RestartSec=3
