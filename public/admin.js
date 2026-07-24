@@ -1161,11 +1161,14 @@ function openPosterLayout(button) {
   image.src = imageUrl;
   image.onload = renderPosterLayoutStage;
   modal.classList.remove("hidden");
+  modal.classList.add("open");
   renderPosterLayoutStage();
 }
 
 function closePosterLayout() {
-  $("#poster-layout-modal").classList.add("hidden");
+  const modal = $("#poster-layout-modal");
+  modal.classList.add("hidden");
+  modal.classList.remove("open");
   adminState.posterLayoutRow = null;
   adminState.posterLayoutDrag = null;
 }
@@ -1726,13 +1729,16 @@ function bindEvents() {
     if (deleteCampaignButton) {
       deleteCampaign(Number(deleteCampaignButton.dataset.deleteCampaign)).catch(error => toast(error.message));
     }
+    const posterLayout = event.target.closest("[data-poster-layout]");
+    if (posterLayout) {
+      event.preventDefault();
+      openPosterLayout(posterLayout);
+      return;
+    }
     const removeCampaignRow = event.target.closest("[data-remove-campaign-row]");
     if (removeCampaignRow) {
       removeCampaignRow.closest("tr")?.remove();
-    }
-    const posterLayout = event.target.closest("[data-poster-layout]");
-    if (posterLayout) {
-      openPosterLayout(posterLayout);
+      return;
     }
     const removeProductImage = event.target.closest("[data-remove-product-image]");
     if (removeProductImage) {
