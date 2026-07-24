@@ -62,6 +62,66 @@ function avatarNode(user = {}) {
   return `<span>${escapeHtml(text)}</span>`;
 }
 
+const splitBuckets = [
+  ">50人",
+  "41-50人",
+  "31-40人",
+  "21-30人",
+  "11-20人",
+  "6-10人",
+  "1-5人"
+];
+
+function normalizeSplitBucket(value) {
+  const text = String(value || "").replace(/\s+/g, "");
+  if (/^>?\s*50/.test(text) || text.includes(">50")) return ">50人";
+  const range = text.match(/(\d+)\D+(\d+)/);
+  if (!range) return "";
+  return `${range[1]}-${range[2]}人`;
+}
+
+function splitScaleMax(counts) {
+  const maxCount = Math.max(50, ...counts.map(count => Number(count || 0)));
+  const step = Math.max(10, Math.ceil(maxCount / 5 / 10) * 10);
+  return step * 5;
+}
+
+function renderSplitAnalysis(rows = []) {
+  const countByBucket = new Map();
+  rows.forEach(row => {
+    const bucket = normalizeSplitBucket(row.bucket);
+    if (!bucket) return;
+    countByBucket.set(bucket, (countByBucket.get(bucket) || 0) + Number(row.count || 0));
+  });
+  const chartRows = splitBuckets.map(bucket => ({
+    bucket,
+    count: countByBucket.get(bucket) || 0
+  }));
+  const max = splitScaleMax(chartRows.map(row => row.count));
+  const ticks = Array.from({ length: 6 }, (_, index) => Math.round(max / 5 * index));
+
+  return `
+    <div class="battle-split-chart">
+      <div class="battle-split-grid" aria-hidden="true">
+        ${ticks.map(tick => `<i style="left:${tick / max * 100}%"></i>`).join("")}
+      </div>
+      <div class="battle-split-rows">
+        ${chartRows.map(row => `
+          <div class="battle-split-row">
+            <span>${escapeHtml(row.bucket)}</span>
+            <b title="${escapeHtml(row.bucket)}：${row.count}">
+              <i style="width:${Math.min(100, Math.max(0, row.count / max * 100))}%"></i>
+            </b>
+          </div>
+        `).join("")}
+      </div>
+      <div class="battle-split-axis" aria-hidden="true">
+        ${ticks.map(tick => `<span style="left:${tick / max * 100}%">${tick}</span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
 async function api(path) {
   const response = await fetch(path, { headers: { "Content-Type": "application/json" } });
   const payload = await response.json().catch(() => ({}));
@@ -213,15 +273,7 @@ function renderScreen(screen) {
     </div>
   `).join("") : '<div class="battle-empty">暂无收益排行</div>';
 
-  const splitRows = screen.split_analysis || [];
-  const maxSplit = Math.max(1, ...splitRows.map(row => Number(row.count || 0)));
-  $("#battle-split-analysis").innerHTML = splitRows.length ? splitRows.map(row => `
-    <div class="battle-bar-row">
-      <span>${escapeHtml(row.bucket)}</span>
-      <b><i style="width:${Math.max(4, Number(row.count || 0) / maxSplit * 100)}%"></i></b>
-      <em>${row.count}</em>
-    </div>
-  `).join("") : '<div class="battle-empty">暂无裂变数据</div>';
+  $("#battle-split-analysis").innerHTML = renderSplitAnalysis(screen.split_analysis || []);
 
   applyScreenAudio(screen.audio_url);
 }

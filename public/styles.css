@@ -3792,3 +3792,160 @@ tr:last-child td {
   transform: translateZ(0);
   backface-visibility: hidden;
 }
+
+/* Split-analysis axis chart and slightly larger battle-screen typography. */
+.battle-screen {
+  font-size: clamp(14px, 0.9vw, 18px);
+}
+
+.battle-title h1 {
+  font-size: clamp(26px, 1.75vw, 34px);
+}
+
+.battle-panel-title {
+  font-size: clamp(14px, 0.96vw, 18px);
+}
+
+.battle-kpi h3 {
+  font-size: clamp(19px, 1.5vw, 28px);
+}
+
+.battle-countdown span {
+  font-size: clamp(18px, 1.35vw, 24px);
+}
+
+.battle-countdown strong {
+  font-size: clamp(22px, 1.58vw, 32px);
+}
+
+.battle-stats div {
+  font-size: clamp(13px, 0.88vw, 16px);
+}
+
+.battle-table-head {
+  font-size: clamp(12px, 0.76vw, 14px);
+}
+
+.battle-table-row,
+.battle-rank-row {
+  font-size: clamp(12px, 0.82vw, 15px);
+}
+
+.battle-empty {
+  font-size: clamp(13px, 0.88vw, 16px);
+}
+
+.battle-bars {
+  position: relative;
+  display: block;
+  height: calc(100% - clamp(24px, 3vh, 34px));
+  min-height: 0;
+}
+
+.battle-split-chart {
+  --split-label-width: clamp(48px, 4.2vw, 70px);
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 24px;
+  height: 100%;
+  min-height: 0;
+  padding: clamp(2px, 0.45vh, 6px) clamp(10px, 1vw, 16px) 2px 0;
+}
+
+.battle-split-grid {
+  position: absolute;
+  top: clamp(4px, 0.8vh, 10px);
+  right: clamp(10px, 1vw, 16px);
+  bottom: 32px;
+  left: var(--split-label-width);
+  pointer-events: none;
+}
+
+.battle-split-grid i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(171, 223, 255, 0.38);
+  box-shadow: 0 0 8px rgba(104, 210, 255, 0.22);
+  transform: translateX(-1px);
+}
+
+.battle-split-rows {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: repeat(7, minmax(0, 1fr));
+  gap: clamp(2px, 0.38vh, 6px);
+  min-height: 0;
+}
+
+.battle-split-row {
+  display: grid;
+  grid-template-columns: var(--split-label-width) minmax(0, 1fr);
+  align-items: center;
+  min-height: 0;
+}
+
+.battle-split-row span {
+  overflow: hidden;
+  padding-right: 6px;
+  color: #d8f8ff;
+  font-size: clamp(12px, 0.75vw, 14px);
+  font-weight: 800;
+  line-height: 1;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.battle-split-row b {
+  position: relative;
+  display: block;
+  height: clamp(9px, 1.55vh, 16px);
+}
+
+.battle-split-row b::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: rgba(93, 192, 255, 0.1);
+  transform: translateY(-50%);
+}
+
+.battle-split-row i {
+  position: relative;
+  z-index: 1;
+  display: block;
+  height: 100%;
+  min-width: 0;
+  background: linear-gradient(90deg, #55f3ff, #62faff);
+  box-shadow: 0 0 10px rgba(85, 243, 255, 0.36);
+}
+
+.battle-split-axis {
+  position: relative;
+  z-index: 1;
+  margin-left: var(--split-label-width);
+  color: rgba(215, 247, 255, 0.8);
+  font-size: clamp(11px, 0.72vw, 13px);
+  font-weight: 800;
+  line-height: 18px;
+}
+
+.battle-split-axis span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+}
+
+.battle-split-axis span:first-child {
+  transform: translateX(0);
+}
+
+.battle-split-axis span:last-child {
+  transform: translateX(-100%);
+}
