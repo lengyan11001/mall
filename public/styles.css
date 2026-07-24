@@ -3601,7 +3601,7 @@ tr:last-child td {
   inset: 0;
   z-index: 1;
   pointer-events: none;
-  background: url("/assets/battle-outer-frame.png?v=20260724-screen-corners") center / 100% 100% no-repeat;
+  background: url("/assets/battle-outer-frame.png?v=20260724-screen-reference-frame") center / 100% 100% no-repeat;
 }
 
 .battle-layout {
