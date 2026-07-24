@@ -3590,3 +3590,28 @@ tr:last-child td {
   content: none;
   display: none;
 }
+
+/* Outer battle-frame artwork from the reference screen. */
+.battle-frame {
+  display: none;
+}
+
+.battle-outer-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: url("/assets/battle-outer-frame.png") center / 100% 100% no-repeat;
+}
+
+.battle-layout {
+  z-index: 2;
+}
+
+.battle-title {
+  z-index: 4;
+}
+
+.screen-tools {
+  z-index: 5;
+}
