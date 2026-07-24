@@ -223,6 +223,25 @@ function textXForAlign(left, width, align) {
   return left;
 }
 
+function estimatedTextWidth(value, fontSize) {
+  return Array.from(String(value || "")).reduce((sum, char) => {
+    if (/[\u2e80-\u9fff\uff00-\uffef]/.test(char)) return sum + fontSize;
+    if (/\s/.test(char)) return sum + fontSize * 0.32;
+    return sum + fontSize * 0.62;
+  }, 0);
+}
+
+function compactTextBox(left, maxWidth, textWidth, align, canvasWidth) {
+  const width = Math.max(1, Math.min(maxWidth, textWidth));
+  let compactLeft = left;
+  if (align === "right") compactLeft = left + maxWidth - width;
+  if (align === "center") compactLeft = left + (maxWidth - width) / 2;
+  return {
+    left: Math.round(Math.max(0, Math.min(compactLeft, canvasWidth - width))),
+    width: Math.round(width)
+  };
+}
+
 function avatarInitials(user) {
   const text = String(user?.nickname || user?.avatar || "WX").trim() || "WX";
   return Array.from(text).slice(0, 2).join("").toUpperCase();
@@ -253,16 +272,21 @@ async function buildOverlayInvitePoster({ posterAsset, user, qrcodeBuffer, outpu
   const normalized = normalizeOverlayPosterLayout(layout);
   const qr = placedBox(normalized.qr, canvasWidth, canvasHeight);
   const avatar = placedBox(normalized.avatar, canvasWidth, canvasHeight, true);
-  const nicknameWidth = Math.round(normalized.nickname.width * canvasWidth);
-  const nicknameLeft = Math.round(Math.min(normalized.nickname.x * canvasWidth, canvasWidth - nicknameWidth));
+  const nicknameMaxWidth = Math.round(normalized.nickname.width * canvasWidth);
+  const nicknameMaxLeft = Math.round(Math.min(normalized.nickname.x * canvasWidth, canvasWidth - nicknameMaxWidth));
   const nicknameTop = Math.round(Math.min(normalized.nickname.y * canvasHeight, canvasHeight - 1));
   const nicknameSize = Math.round(normalized.nickname.font_size * canvasWidth);
   const nickname = user.nickname || `用户${user.id}`;
-  const maxChars = Math.max(2, Math.floor(nicknameWidth / Math.max(10, nicknameSize * 0.62)));
+  const maxChars = Math.max(2, Math.floor(nicknameMaxWidth / Math.max(10, nicknameSize * 0.62)));
   const nicknameLines = textLines(nickname, maxChars, 2);
+  const nicknameTextWidth = Math.max(
+    nicknameSize * 1.8,
+    ...nicknameLines.map(line => estimatedTextWidth(line, nicknameSize) + Math.max(8, nicknameSize * 0.28))
+  );
+  const nicknameBox = compactTextBox(nicknameMaxLeft, nicknameMaxWidth, nicknameTextWidth, normalized.nickname.align, canvasWidth);
   const nicknameText = nicknameLines.map((line, index) => {
     const lineY = nicknameTop + nicknameSize + index * Math.round(nicknameSize * 1.18);
-    return `<text x="${textXForAlign(nicknameLeft, nicknameWidth, normalized.nickname.align)}" y="${lineY}" text-anchor="${textAnchor(normalized.nickname.align)}" font-size="${nicknameSize}" font-weight="900" fill="${normalized.nickname.color}" stroke="#000000" stroke-width="${Math.max(1, Math.round(nicknameSize * 0.045))}" paint-order="stroke fill">${escapeXml(line)}</text>`;
+    return `<text x="${textXForAlign(nicknameBox.left, nicknameBox.width, normalized.nickname.align)}" y="${lineY}" text-anchor="${textAnchor(normalized.nickname.align)}" font-size="${nicknameSize}" font-weight="900" fill="${normalized.nickname.color}" stroke="#000000" stroke-width="${Math.max(1, Math.round(nicknameSize * 0.045))}" paint-order="stroke fill">${escapeXml(line)}</text>`;
   }).join("");
   const avatarFallback = `
     <circle cx="${avatar.left + avatar.size / 2}" cy="${avatar.top + avatar.size / 2}" r="${avatar.size / 2}" fill="#14b8a6"/>
@@ -329,13 +353,16 @@ async function buildInvitePoster({ campaign, user, qrcodeBuffer, outputPath, bra
   const inviter = user.nickname || `用户${user.id}`;
   const productImageUrl = Array.isArray(product.images) && product.images.length ? product.images[0] : product.image_url || "";
   const posterAsset = await imageAsset(primaryPoster.image_url || campaign.share_cover || productImageUrl);
-  if (primaryPoster.layout?.mode === "overlay" && posterAsset.buffer) {
+  const overlayLayout = primaryPoster.layout?.mode === "overlay"
+    ? primaryPoster.layout
+    : (primaryPoster.image_url ? defaultOverlayPosterLayout() : null);
+  if (overlayLayout && posterAsset.buffer) {
     const built = await buildOverlayInvitePoster({
       posterAsset,
       user,
       qrcodeBuffer,
       outputPath,
-      layout: primaryPoster.layout
+      layout: overlayLayout
     });
     if (built) return;
   }

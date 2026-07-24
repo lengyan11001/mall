@@ -884,13 +884,17 @@ a {
 
 .poster-layout-nickname {
   display: block;
-  min-width: 70px;
+  box-sizing: border-box;
+  min-width: 0;
   min-height: 24px;
+  padding: 2px 6px;
   border-style: dashed;
   background: rgba(17, 24, 39, 0.18);
   color: #ffffff;
   line-height: 1.15;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.72);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

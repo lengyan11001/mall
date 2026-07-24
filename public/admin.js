@@ -1091,6 +1091,33 @@ function fitPosterLayoutStage() {
   stage.style.width = `${Math.floor(width)}px`;
 }
 
+function posterNicknamePreviewText() {
+  return "\u7528\u6237\u6635\u79f0";
+}
+
+function estimatedLayoutTextWidth(value, fontSize) {
+  return Array.from(String(value || "")).reduce((sum, char) => {
+    if (/[\u2e80-\u9fff\uff00-\uffef]/.test(char)) return sum + fontSize;
+    if (/\s/.test(char)) return sum + fontSize * 0.32;
+    return sum + fontSize * 0.62;
+  }, 0);
+}
+
+function compactNicknameBox(layout, stageWidth, text = posterNicknamePreviewText()) {
+  const nickname = layout.nickname || defaultPosterLayout().nickname;
+  const maxWidth = Math.max(1, nickname.width * stageWidth);
+  const fontSize = Math.max(1, nickname.font_size * stageWidth);
+  const textWidth = Math.max(fontSize * 1.8, estimatedLayoutTextWidth(text, fontSize) + Math.max(8, fontSize * 0.28));
+  const width = clamp(textWidth, Math.min(maxWidth, fontSize * 1.8), maxWidth);
+  let left = nickname.x * stageWidth;
+  if (nickname.align === "right") left = left + maxWidth - width;
+  if (nickname.align === "center") left = left + (maxWidth - width) / 2;
+  return {
+    left: clamp(left, 0, Math.max(0, stageWidth - width)),
+    width
+  };
+}
+
 function currentLayoutPart() {
   const selected = adminState.posterLayoutSelected || "qr";
   return adminState.posterLayout?.[selected] || null;
@@ -1146,15 +1173,16 @@ function renderPosterLayoutStage() {
   avatar.style.height = `${avatarSize}px`;
   avatar.style.fontSize = `${Math.max(10, avatarSize * 0.22)}px`;
 
-  const nicknameWidth = layout.nickname.width * width;
+  const nicknameBox = compactNicknameBox(layout, width);
   const nicknameFont = layout.nickname.font_size * width;
-  nickname.style.left = `${layout.nickname.x * width}px`;
+  nickname.style.left = `${nicknameBox.left}px`;
   nickname.style.top = `${layout.nickname.y * height}px`;
-  nickname.style.width = `${nicknameWidth}px`;
+  nickname.style.width = `${nicknameBox.width}px`;
+  nickname.style.maxWidth = `${layout.nickname.width * width}px`;
   nickname.style.fontSize = `${nicknameFont}px`;
   nickname.style.color = layout.nickname.color;
   nickname.style.textAlign = layout.nickname.align;
-  nickname.textContent = "用户昵称";
+  nickname.textContent = posterNicknamePreviewText();
   setLayoutSelected(adminState.posterLayoutSelected || "qr");
 }
 
@@ -1238,7 +1266,7 @@ function movePosterLayoutDrag(event) {
   if (!drag || !adminState.posterLayout) return;
   const { width, height } = layoutStageSize();
   const part = adminState.posterLayout[drag.selected];
-  const itemWidth = drag.selected === "nickname" ? (part.width || 0.42) * width : (part.size || 0.1) * width;
+  const itemWidth = drag.selected === "nickname" ? compactNicknameBox(adminState.posterLayout, width).width : (part.size || 0.1) * width;
   const itemHeight = drag.selected === "nickname" ? Math.max(24, (part.font_size || 0.032) * width * 1.2) : (part.size || 0.1) * width;
   const nextX = drag.x + (event.clientX - drag.startX) / width;
   const nextY = drag.y + (event.clientY - drag.startY) / height;
