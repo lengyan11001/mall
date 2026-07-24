@@ -19,7 +19,8 @@ const adminState = {
   posterLayout: null,
   posterLayoutSelected: "qr",
   posterLayoutDrag: null,
-  token: localStorage.getItem("mallAdminToken") || ""
+  token: localStorage.getItem("mallAdminToken") || "",
+  appid: localStorage.getItem("mallAdminAppid") || ""
 };
 
 const $ = selector => document.querySelector(selector);
@@ -106,6 +107,29 @@ function toast(message) {
   node.classList.add("show");
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => node.classList.remove("show"), 2200);
+}
+
+function adminTenantQuery() {
+  const appid = String(adminState.appid || "").trim();
+  return appid ? `appid=${encodeURIComponent(appid)}` : "";
+}
+
+function updateTenantLinks() {
+  const query = adminTenantQuery();
+  const screenLink = $("#public-screen-link");
+  if (screenLink) {
+    screenLink.href = query ? `/screen.html?${query}` : "/screen.html";
+  }
+}
+
+function setAdminAppid(appid) {
+  adminState.appid = String(appid || "").trim();
+  if (adminState.appid) {
+    localStorage.setItem("mallAdminAppid", adminState.appid);
+  } else {
+    localStorage.removeItem("mallAdminAppid");
+  }
+  updateTenantLinks();
 }
 
 async function api(path, options = {}) {
@@ -315,6 +339,7 @@ async function adminLogin() {
     })
   });
   adminState.token = data.token;
+  setAdminAppid(data.appid);
   localStorage.setItem("mallAdminToken", data.token);
   hideAdminLogin();
   toast("登录成功");
@@ -323,6 +348,7 @@ async function adminLogin() {
 
 function adminLogout() {
   adminState.token = "";
+  setAdminAppid("");
   localStorage.removeItem("mallAdminToken");
   showAdminLogin();
 }
@@ -359,6 +385,7 @@ async function loadCurrent() {
 
 async function loadDashboard() {
   adminState.dashboard = await api("/api/admin/dashboard");
+  if (adminState.dashboard?.appid) setAdminAppid(adminState.dashboard.appid);
   renderDashboard();
 }
 
@@ -1858,6 +1885,7 @@ function bindEvents() {
 async function init() {
   hydrateIcons();
   bindEvents();
+  updateTenantLinks();
   if (!adminState.token) {
     showAdminLogin();
     return;

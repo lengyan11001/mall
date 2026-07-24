@@ -553,7 +553,10 @@ function createServer({ store }) {
     }
 
     if (req.method === "GET" && pathname === "/api/admin/dashboard") {
-      ok(res, await store.dashboard(req.admin.appid));
+      ok(res, {
+        ...(await store.dashboard(req.admin.appid)),
+        appid: req.admin.appid
+      });
       return;
     }
 
