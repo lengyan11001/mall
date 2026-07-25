@@ -356,7 +356,7 @@ a {
 
 .image-upload-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
 }
@@ -404,7 +404,7 @@ a {
 }
 
 .editor-table .table-upload-cell .image-upload-row {
-  grid-template-columns: minmax(140px, 1fr) auto;
+  grid-template-columns: minmax(140px, 1fr) auto auto;
   gap: 6px;
 }
 
@@ -782,7 +782,7 @@ a {
 }
 
 .lottery-prize-table .table-upload-cell .image-upload-row {
-  grid-template-columns: minmax(0, 1fr) 48px;
+  grid-template-columns: minmax(0, 1fr) 48px 48px;
   gap: 4px;
 }
 
@@ -804,6 +804,10 @@ a {
 .lottery-prize-table .table-upload-cell .btn::after {
   content: "上传";
   font-size: 12px;
+}
+
+.lottery-prize-table .table-upload-cell [data-clear-upload-field]::after {
+  content: "删除";
 }
 
 .lottery-prize-table [data-remove-campaign-row] {

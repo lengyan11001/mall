@@ -275,15 +275,50 @@ function renderImageUrlPreview(inputSelector, previewSelector) {
   renderImagePreview($(inputSelector), $(previewSelector));
 }
 
+function clearUploadInput(input, preview) {
+  if (!input) return;
+  input.value = "";
+  renderImagePreview(input, preview);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function clearUploadValue(button) {
+  const targetSelector = button.dataset.clearUploadTarget;
+  const previewSelector = button.dataset.previewTarget;
+  const inline = button.closest(".table-upload-cell") || button.closest(".field");
+  const input = targetSelector ? $(targetSelector) : inline?.querySelector("input");
+  const preview = previewSelector ? $(previewSelector) : inline?.querySelector(".image-url-preview");
+  clearUploadInput(input, preview);
+  toast(button.dataset.uploadKind === "audio" ? "音频已删除" : "图片已删除");
+}
+
+function enhanceUploadTargetClearButtons() {
+  $$("[data-upload-target]").forEach(uploadButton => {
+    if (uploadButton.parentElement?.querySelector(`[data-clear-upload-target="${uploadButton.dataset.uploadTarget}"]`)) return;
+    const kind = uploadButton.dataset.uploadKind || "image";
+    const clearButton = document.createElement("button");
+    clearButton.className = "btn secondary compact";
+    clearButton.type = "button";
+    clearButton.dataset.clearUploadTarget = uploadButton.dataset.uploadTarget;
+    clearButton.dataset.previewTarget = uploadButton.dataset.previewTarget || "";
+    clearButton.dataset.uploadKind = kind;
+    clearButton.textContent = kind === "audio" ? "删除音频" : "删除图片";
+    uploadButton.insertAdjacentElement("afterend", clearButton);
+  });
+}
+
 function uploadControl(field, value = "", placeholder = "上传图片后自动生成链接，也可以粘贴图片链接", kind = "image") {
   const accept = uploadAccept(kind);
   const label = kind === "audio" ? "上传音频" : "上传图片";
+  const clearLabel = kind === "audio" ? "删除音频" : "删除图片";
   const preview = kind === "image" && value ? `<img src="${escapeAttr(value)}" alt="图片预览" />` : "";
   return `
     <div class="table-upload-cell">
       <div class="image-upload-row">
         <input class="input" data-field="${field}" value="${escapeAttr(value || "")}" placeholder="${escapeAttr(placeholder)}" />
         <button class="btn ghost compact" type="button" data-upload-field="${field}" data-upload-kind="${kind}" data-upload-accept="${accept}">${label}</button>
+        <button class="btn secondary compact" type="button" data-clear-upload-field="${field}" data-upload-kind="${kind}">${clearLabel}</button>
       </div>
       ${kind === "image" ? `<div class="image-url-preview">${preview}</div>` : ""}
     </div>`;
@@ -1820,6 +1855,7 @@ async function saveSettings() {
 }
 
 function bindEvents() {
+  enhanceUploadTargetClearButtons();
   $$(".admin-nav button").forEach(button => {
     button.addEventListener("click", () => setAdminTab(button.dataset.adminTab));
   });
@@ -1955,6 +1991,10 @@ function bindEvents() {
     const uploadField = event.target.closest("[data-upload-field]");
     if (uploadField) {
       chooseAndUploadFile(uploadField);
+    }
+    const clearUploadField = event.target.closest("[data-clear-upload-field], [data-clear-upload-target]");
+    if (clearUploadField) {
+      clearUploadValue(clearUploadField);
     }
     const qrcode = event.target.closest("[data-add-qrcode]");
     if (qrcode) {
