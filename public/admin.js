@@ -322,6 +322,96 @@ function chooseAndUploadFile(button) {
   picker.click();
 }
 
+function appendDetailImageRows(items = []) {
+  const rows = readCampaignRows("detail-image");
+  const nextRows = [
+    ...rows,
+    ...items
+      .map(item => ({
+        image_url: String(item && item.image_url || item && item.url || "").trim(),
+        title: String(item && item.title || "")
+      }))
+      .filter(item => item.image_url)
+  ];
+  renderCampaignRows("detail-image", nextRows);
+}
+
+function detailImageFilesFromPicker() {
+  return new Promise(resolve => {
+    const picker = document.createElement("input");
+    picker.type = "file";
+    picker.accept = uploadAccept("image");
+    picker.multiple = true;
+    picker.addEventListener("change", () => resolve(Array.from(picker.files || [])), { once: true });
+    picker.addEventListener("cancel", () => resolve([]), { once: true });
+    picker.click();
+  });
+}
+
+async function uploadDetailImages(button) {
+  const files = await detailImageFilesFromPicker();
+  if (!files.length) return;
+  const originalText = button.textContent || "批量上传";
+  button.disabled = true;
+  button.textContent = `上传中 ${files.length} 张`;
+  try {
+    const uploaded = [];
+    for (let index = 0; index < files.length; index += 1) {
+      button.textContent = `上传中 ${index + 1}/${files.length}`;
+      uploaded.push(await uploadAdminFile(files[index], "image"));
+    }
+    appendDetailImageRows(uploaded.map(item => ({ image_url: item.url, title: "" })));
+    toast(`已上传 ${uploaded.length} 张详情图`);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+function chooseAndUploadFile(button) {
+  const targetSelector = button.dataset.uploadTarget;
+  const previewSelector = button.dataset.previewTarget;
+  const kind = button.dataset.uploadKind || "image";
+  const inline = button.closest(".table-upload-cell") || button.closest(".field");
+  const input = targetSelector ? $(targetSelector) : inline?.querySelector("input");
+  if (!input) return;
+  const detailRow = button.closest("tr")?.dataset.rowType === "detail-image";
+  const picker = document.createElement("input");
+  picker.type = "file";
+  picker.accept = button.dataset.uploadAccept || uploadAccept(kind);
+  picker.multiple = kind === "image" && detailRow;
+  picker.addEventListener("change", async () => {
+    const files = Array.from(picker.files || []);
+    if (!files.length) return;
+    const originalText = button.textContent || button.dataset.uploadLabel || (kind === "audio" ? "上传音频" : "上传图片");
+    button.disabled = true;
+    button.textContent = files.length > 1 ? `上传中 ${files.length} 张` : "上传中";
+    try {
+      const uploads = [];
+      for (let index = 0; index < files.length; index += 1) {
+        button.textContent = files.length > 1 ? `上传中 ${index + 1}/${files.length}` : "上传中";
+        uploads.push(await uploadAdminFile(files[index], kind));
+      }
+      input.value = uploads[0].url;
+      const preview = previewSelector ? $(previewSelector) : inline?.querySelector(".image-url-preview");
+      if (kind === "image") renderImagePreview(input, preview);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      if (detailRow && uploads.length > 1) {
+        appendDetailImageRows(uploads.slice(1).map(item => ({ image_url: item.url, title: "" })));
+      }
+      toast(kind === "audio" ? "音频已上传" : `已上传 ${uploads.length} 张图片`);
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }, { once: true });
+  picker.click();
+}
+
 function showAdminLogin() {
   $("#admin-login-layer").classList.add("open");
 }
@@ -1776,6 +1866,9 @@ function bindEvents() {
   });
   $$("[data-add-campaign-row]").forEach(button => {
     button.addEventListener("click", () => addCampaignRow(button.dataset.addCampaignRow));
+  });
+  $$("[data-upload-detail-images]").forEach(button => {
+    button.addEventListener("click", () => uploadDetailImages(button));
   });
   $$("[data-upload-target]").forEach(button => {
     button.addEventListener("click", () => chooseAndUploadFile(button));
