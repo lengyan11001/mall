@@ -188,6 +188,7 @@ async function migrateAcquisition(conn) {
   await addColumnIfMissing(conn, "acquisition_campaigns", "team_qrcode_types", "JSON NULL");
   await addColumnIfMissing(conn, "acquisition_campaigns", "traffic_config", "JSON NULL");
   await addColumnIfMissing(conn, "acquisition_campaigns", "share_timeline_text", "VARCHAR(255) NOT NULL DEFAULT ''");
+  await addColumnIfMissing(conn, "acquisition_campaigns", "detail_images", "JSON NULL");
   await addColumnIfMissing(conn, "acquisition_campaigns", "customer_service_qrcode", "VARCHAR(600) NOT NULL DEFAULT ''");
   await addColumnIfMissing(conn, "acquisition_campaigns", "background_music", "VARCHAR(600) NOT NULL DEFAULT ''");
   await addColumnIfMissing(conn, "acquisition_campaigns", "poster_config", "JSON NULL");

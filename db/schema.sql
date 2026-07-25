@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS acquisition_campaigns (
   team_qrcode_types JSON NULL,
   traffic_config JSON NULL,
   share_cover VARCHAR(600) NOT NULL DEFAULT '',
+  detail_images JSON NULL,
   share_description VARCHAR(255) NOT NULL DEFAULT '',
   share_timeline_text VARCHAR(255) NOT NULL DEFAULT '',
   customer_service_qrcode VARCHAR(600) NOT NULL DEFAULT '',

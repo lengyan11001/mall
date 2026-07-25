@@ -329,6 +329,7 @@ function campaignPayload(body, existing = {}) {
     teamQrcodeTypes: jsonField(body.team_qrcode_types, parseDbJson(existing.team_qrcode_types, ["personal", "group"])),
     trafficConfig: jsonField(body.traffic_config, parseDbJson(existing.traffic_config, {})),
     shareCover: cleanText(body.share_cover, existing.share_cover, 600),
+    detailImages: jsonField(body.detail_images, parseDbJson(existing.detail_images, [])),
     shareDescription: cleanText(body.share_description, existing.share_description, 255),
     shareTimelineText: cleanText(body.share_timeline_text, existing.share_timeline_text, 255),
     customerServiceQrcode: cleanText(body.customer_service_qrcode, existing.customer_service_qrcode, 600),
@@ -1029,7 +1030,7 @@ function createStore(pool = createPool()) {
           reward_issue_way, reward_permission, reward_rule, reward_level1, reward_level2, direct_pay_way,
           reward_multiple_enabled, reward_step_enabled, team_reward_enabled, team_reward_level1,
           team_reward_level2, lottery_enabled, lottery_config, qrcode_guide_image, team_qrcode_enabled,
-          team_qrcode_types, traffic_config, share_cover, share_description, share_timeline_text,
+          team_qrcode_types, traffic_config, share_cover, detail_images, share_description, share_timeline_text,
           customer_service_qrcode, background_music, poster_config, form_schema, virtual_sold_count,
           virtual_share_count, virtual_browse_count, virtual_invite_count, virtual_rankings, status
         ) VALUES (
@@ -1039,7 +1040,7 @@ function createStore(pool = createPool()) {
           :rewardIssueWay, :rewardPermission, :rewardRule, :rewardLevel1, :rewardLevel2, :directPayWay,
           :rewardMultipleEnabled, :rewardStepEnabled, :teamRewardEnabled, :teamRewardLevel1,
           :teamRewardLevel2, :lotteryEnabled, :lotteryConfig, :qrcodeGuideImage, :teamQrcodeEnabled,
-          :teamQrcodeTypes, :trafficConfig, :shareCover, :shareDescription, :shareTimelineText,
+          :teamQrcodeTypes, :trafficConfig, :shareCover, :detailImages, :shareDescription, :shareTimelineText,
           :customerServiceQrcode, :backgroundMusic, :posterConfig, :formSchema, :virtualSoldCount,
           :virtualShareCount, :virtualBrowseCount, :virtualInviteCount, :virtualRankings, :status
         )`,
@@ -1099,6 +1100,7 @@ function createStore(pool = createPool()) {
           team_qrcode_types = :teamQrcodeTypes,
           traffic_config = :trafficConfig,
           share_cover = :shareCover,
+          detail_images = :detailImages,
           share_description = :shareDescription,
           share_timeline_text = :shareTimelineText,
           customer_service_qrcode = :customerServiceQrcode,
@@ -2398,18 +2400,35 @@ function createStore(pool = createPool()) {
     const id = assertId(userId, "用户 ID");
     const user = await getUser(id, pool, scopedAppId);
     const appSettings = await settings(pool, scopedAppId);
+    const [directCount] = await many(pool, `
+      SELECT COUNT(*) direct_count
+      FROM users
+      WHERE parent_id = :id AND appid = :appid
+    `, { id, appid: scopedAppId });
     const directCustomers = await many(pool, `
       SELECT u.*, (SELECT COUNT(*) FROM users child WHERE child.parent_id = u.id AND child.appid = :appid) children_count
       FROM users u
       WHERE u.parent_id = :id AND u.appid = :appid
       ORDER BY u.created_at DESC
-      LIMIT 200
+      LIMIT 100
     `, { id, appid: scopedAppId });
     const [indirect] = await many(pool, `
       SELECT COUNT(*) indirect_count
       FROM users child
       JOIN users direct ON direct.id = child.parent_id
       WHERE direct.parent_id = :id AND child.appid = :appid AND direct.appid = :appid
+    `, { id, appid: scopedAppId });
+    const indirectCustomers = await many(pool, `
+      SELECT
+        child.*,
+        direct.id direct_parent_id,
+        direct.nickname direct_parent_nickname,
+        direct.phone direct_parent_phone
+      FROM users child
+      JOIN users direct ON direct.id = child.parent_id
+      WHERE direct.parent_id = :id AND child.appid = :appid AND direct.appid = :appid
+      ORDER BY child.created_at DESC
+      LIMIT 100
     `, { id, appid: scopedAppId });
     const commissions = await listCommissions({ userId: id, appid: scopedAppId, pageSize: 100 });
     const rows = await many(pool, `
@@ -2430,9 +2449,17 @@ function createStore(pool = createPool()) {
       pending: money(rows[0].pending),
       withdrawable: await userAvailableBalance(id, pool, scopedAppId),
       withdrawn: money(withdrawnRows[0].withdrawn),
-      direct_count: directCustomers.length,
+      direct_count: Number(directCount.direct_count || 0),
       indirect_count: Number(indirect.indirect_count || 0),
-      customers: directCustomers.map(row => ({ ...normalizeUser(row), children_count: Number(row.children_count || 0) })),
+      direct_customers: directCustomers.map(row => ({ ...normalizeUser(row), relation_label: "direct", children_count: Number(row.children_count || 0) })),
+      indirect_customers: indirectCustomers.map(row => ({
+        ...normalizeUser(row),
+        relation_label: "indirect",
+        direct_parent_id: row.direct_parent_id || null,
+        direct_parent_nickname: row.direct_parent_nickname || "",
+        direct_parent_phone: row.direct_parent_phone || ""
+      })),
+      customers: directCustomers.map(row => ({ ...normalizeUser(row), relation_label: "direct", children_count: Number(row.children_count || 0) })),
       commissions,
       withdrawals
     };

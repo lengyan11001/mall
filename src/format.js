@@ -213,6 +213,7 @@ function campaignRow(row) {
     team_qrcode_types: parseJson(row.team_qrcode_types, ["personal", "group"]),
     traffic_config: parseJson(row.traffic_config, {}),
     share_cover: assetUrl(row.share_cover),
+    detail_images: assetRows(parseJson(row.detail_images, [])),
     share_description: row.share_description || "",
     share_timeline_text: row.share_timeline_text || "",
     customer_service_qrcode: assetUrl(row.customer_service_qrcode),

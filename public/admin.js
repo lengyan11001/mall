@@ -1031,6 +1031,16 @@ function renderCampaignRows(type, rows = []) {
     `).join("");
     return;
   }
+  if (type === "detail-image") {
+    $("#campaign-detail-image-rows").innerHTML = safeRows.map(item => `
+      <tr data-row-type="detail-image">
+        <td>${uploadControl("image_url", item.image_url || "", "上传详情图片")}</td>
+        <td><input class="input" data-field="title" value="${escapeAttr(item.title || item.text || "")}" placeholder="图片备注，可不填" /></td>
+        <td><button class="btn secondary compact" type="button" data-remove-campaign-row>删除</button></td>
+      </tr>
+    `).join("");
+    return;
+  }
   if (type === "poster") {
     $("#campaign-poster-rows").innerHTML = safeRows.map(item => `
       <tr data-row-type="poster">
@@ -1053,6 +1063,7 @@ function addCampaignRow(type) {
     "lottery-prize": { name: "谢谢参与", type: "thanks", probability: 0.1 },
     ranking: { avatar: "", nickname: "", invite_count: 0, reward_amount: 0 },
     "form-field": { label: "", name: "", type: "text", options: [], required: false },
+    "detail-image": { image_url: "", title: "" },
     poster: { image_url: "", text: "", layout: defaultPosterLayout() }
   };
   if (!defaults[type]) return;
@@ -1101,6 +1112,12 @@ function readCampaignRows(type) {
         required
       };
     }).filter(Boolean);
+  }
+  if (type === "detail-image") {
+    return $$("#campaign-detail-image-rows tr").map(row => ({
+      image_url: row.querySelector('[data-field="image_url"]').value.trim(),
+      title: row.querySelector('[data-field="title"]').value.trim()
+    })).filter(item => item.image_url);
   }
   if (type === "poster") {
     return $$("#campaign-poster-rows tr").map(row => ({
@@ -1373,6 +1390,7 @@ function renderCampaignReview() {
     ["抽奖", payload.lottery_enabled ? `启用，${payload.lottery_config.prizes.length} 档奖品` : "未启用"],
     ["引流", payload.team_qrcode_enabled ? "允许团队长上传引流码" : "平台统一引流码"],
     ["虚拟量", `销量 ${payload.virtual_sold_count} / 浏览 ${payload.virtual_browse_count} / 分享 ${payload.virtual_share_count}`],
+    ["详情图片", payload.detail_images.length ? `${payload.detail_images.length} 张` : "未配置"],
     ["分享素材", payload.poster_config.length ? `${payload.poster_config.length} 张海报` : "未配置"]
   ];
   $("#campaign-review").innerHTML = rows.map(([label, value]) => `
@@ -1471,6 +1489,7 @@ function openCampaignEditor(campaign = null) {
   renderCampaignRows("form-field", campaign?.form_schema || []);
   $("#campaign-share-cover").value = campaign?.share_cover || campaign?.product?.images?.[0] || "";
   renderImageUrlPreview("#campaign-share-cover", "#campaign-share-cover-preview");
+  renderCampaignRows("detail-image", campaign?.detail_images || []);
   $("#campaign-share-description").value = campaign?.share_description || "";
   $("#campaign-share-timeline").value = campaign?.share_timeline_text || "";
   renderCampaignRows("poster", campaign?.poster_config || []);
@@ -1529,6 +1548,7 @@ function campaignFormPayload() {
     delivery_methods: ["express"],
     form_schema: readCampaignRows("form-field"),
     share_cover: $("#campaign-share-cover").value.trim(),
+    detail_images: readCampaignRows("detail-image"),
     share_description: $("#campaign-share-description").value.trim(),
     share_timeline_text: $("#campaign-share-timeline").value.trim(),
     team_qrcode_types: [
