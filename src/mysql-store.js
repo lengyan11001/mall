@@ -3,7 +3,7 @@ const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
 const { appError } = require("./errors");
-const { getUnlimitedQRCode } = require("./wechat");
+const { getUnlimitedQRCode, uploadShippingInfo } = require("./wechat");
 const {
   createJsapiPrepay,
   jsapiPayParams,
@@ -19,7 +19,7 @@ const {
   parseProductInviteScene,
   productAssetPaths
 } = require("./invite-assets");
-const { defaultAppId } = require("./tenant-config");
+const { defaultAppId, resolveTenant } = require("./tenant-config");
 const {
   addressRow,
   campaignRow,
@@ -128,6 +128,72 @@ function normalizeAppId(appid) {
   return String(appid || defaultAppId()).trim();
 }
 
+function withdrawalLocksBalance(status) {
+  return ["pending", "approved", "paidout"].includes(String(status || ""));
+}
+
+function defaultHomeConfig() {
+  return {
+    hero: {
+      kicker: "潮玩周边商城",
+      title: "门店想要裂变效果好",
+      highlight: "就用 非常好裂变",
+      subtitle: "精选手办、盲盒、二次元周边，现货好物每日更新。",
+      image_url: "",
+      action_text: "逛商品",
+      action_path: "/pages/home/index"
+    },
+    entries: [
+      { title: "拓客宝", image_url: "", path: "/pages/store/index" },
+      { title: "行业方案", image_url: "", path: "/pages/store/index" },
+      { title: "经典案例", image_url: "", path: "/pages/store/index" },
+      { title: "私域课堂", image_url: "", path: "/pages/store/index" },
+      { title: "私域导师", image_url: "", path: "/pages/store/index" },
+      { title: "引流产品", image_url: "", path: "/pages/store/index" }
+    ],
+    product_section: {
+      kicker: "商品中心",
+      title: "精选商品",
+      subtitle: "普通商品在这里展示，拓客活动进入商家中心查看。"
+    }
+  };
+}
+
+function normalizeHomeEntry(item = {}) {
+  return {
+    title: cleanText(item.title, "", 16),
+    image_url: cleanText(item.image_url, "", 600),
+    path: cleanText(item.path, "/pages/home/index", 180) || "/pages/home/index"
+  };
+}
+
+function normalizeHomeConfig(value) {
+  const defaults = defaultHomeConfig();
+  const source = value && typeof value === "object" ? value : {};
+  const hero = source.hero && typeof source.hero === "object" ? source.hero : {};
+  const productSection = source.product_section && typeof source.product_section === "object" ? source.product_section : {};
+  const entries = Array.isArray(source.entries)
+    ? source.entries.map(normalizeHomeEntry).filter(item => item.title).slice(0, 12)
+    : defaults.entries;
+  return {
+    hero: {
+      kicker: cleanText(hero.kicker, defaults.hero.kicker, 24),
+      title: cleanText(hero.title, defaults.hero.title, 40),
+      highlight: cleanText(hero.highlight, defaults.hero.highlight, 40),
+      subtitle: cleanText(hero.subtitle, defaults.hero.subtitle, 100),
+      image_url: cleanText(hero.image_url, defaults.hero.image_url, 600),
+      action_text: cleanText(hero.action_text, defaults.hero.action_text, 16),
+      action_path: cleanText(hero.action_path, defaults.hero.action_path, 180)
+    },
+    entries: entries.length ? entries : defaults.entries,
+    product_section: {
+      kicker: cleanText(productSection.kicker, defaults.product_section.kicker, 24),
+      title: cleanText(productSection.title, defaults.product_section.title, 32),
+      subtitle: cleanText(productSection.subtitle, defaults.product_section.subtitle, 100)
+    }
+  };
+}
+
 function normalizeSettings(row) {
   return {
     commission_level_1: Number(row.commission_level_1),
@@ -135,7 +201,8 @@ function normalizeSettings(row) {
     min_withdrawal: Number(row.min_withdrawal),
     compliance_name: row.compliance_name,
     auto_pay_enabled: Boolean(row.auto_pay_enabled),
-    screen_audio_url: row.screen_audio_url || ""
+    screen_audio_url: row.screen_audio_url || "",
+    home_config: normalizeHomeConfig(parseDbJson(row.home_config, null))
   };
 }
 
@@ -203,6 +270,49 @@ function enumValue(value, allowed, fallback) {
 
 function cleanText(value, fallback = "", max = 255) {
   return String(value ?? fallback).trim().slice(0, max);
+}
+
+function adminUserRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    appid: normalizeAppId(row.appid),
+    username: row.username,
+    phone: row.phone || "",
+    display_name: row.display_name || row.username,
+    role: row.role || "super",
+    parent_admin_id: row.parent_admin_id || null,
+    status: row.status || "active",
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
+function normalizeAdminScope(adminOrAppid = "") {
+  if (adminOrAppid && typeof adminOrAppid === "object") {
+    const adminId = Number(adminOrAppid.id || adminOrAppid.admin_id || 0);
+    const role = adminOrAppid.role || (adminId ? "agent" : "super");
+    return {
+      appid: normalizeAppId(adminOrAppid.appid),
+      adminId,
+      role,
+      ownerAdminId: role === "agent" && adminId > 0 ? adminId : null,
+      isSuper: role !== "agent" || !adminId
+    };
+  }
+  return {
+    appid: normalizeAppId(adminOrAppid),
+    adminId: 0,
+    role: "super",
+    ownerAdminId: null,
+    isSuper: true
+  };
+}
+
+function assertSuperAdmin(adminOrAppid) {
+  const scope = normalizeAdminScope(adminOrAppid);
+  if (!scope.isSuper) throw appError(403, "只有总后台账号可以管理代理商");
+  return scope;
 }
 
 function positiveInt(value, fallback = 0, max = Number.MAX_SAFE_INTEGER) {
@@ -286,6 +396,7 @@ function productPayload(body, existing = {}) {
     noRefundAfterPay: boolFlag(body.no_refund_after_pay ?? existing.no_refund_after_pay),
     freightTemplate: cleanText(body.freight_template, existing.freight_template, 80),
     deliveryMethods: jsonField(body.delivery_methods, parseDbJson(existing.delivery_methods, ["express"])),
+    pickupAddress: cleanText(body.pickup_address, existing.pickup_address, 255),
     vipEnabled: boolFlag(body.vip_enabled ?? existing.vip_enabled ?? true)
   };
 }
@@ -294,7 +405,7 @@ function campaignPayload(body, existing = {}) {
   return {
     name: cleanText(body.name, existing.name, 160),
     description: cleanText(body.description, existing.description, 255),
-    productId: Number(body.product_id ?? existing.product_id),
+    productId: null,
     startAt: mysqlDate(body.start_at, existing.start_at || new Date()),
     endAt: mysqlDate(body.end_at, existing.end_at || new Date(Date.now() + 7 * 86400000)),
     hideTime: boolFlag(body.hide_time ?? existing.hide_time),
@@ -304,6 +415,7 @@ function campaignPayload(body, existing = {}) {
     perUserLimit: Math.max(0, Number(body.per_user_limit ?? existing.per_user_limit ?? 1)),
     perOrderLimit: Math.max(0, Number(body.per_order_limit ?? existing.per_order_limit ?? 1)),
     deliveryMethods: jsonField(body.delivery_methods, parseDbJson(existing.delivery_methods, ["express"])),
+    pickupAddress: cleanText(body.pickup_address, existing.pickup_address, 255),
     freeShipping: boolFlag(body.free_shipping ?? existing.free_shipping ?? true),
     showStoreAddress: boolFlag(body.show_store_address ?? existing.show_store_address),
     verifyAtOrderStore: boolFlag(body.verify_at_order_store ?? existing.verify_at_order_store),
@@ -379,9 +491,9 @@ function createStore(pool = createPool()) {
       const fallback = await one(conn, "SELECT * FROM app_settings ORDER BY id LIMIT 1");
       await conn.query(
         `INSERT INTO app_settings (
-          appid, commission_level_1, commission_level_2, min_withdrawal, compliance_name, auto_pay_enabled, screen_audio_url
+          appid, commission_level_1, commission_level_2, min_withdrawal, compliance_name, auto_pay_enabled, screen_audio_url, home_config
         ) VALUES (
-          :appid, :level1, :level2, :minWithdrawal, :complianceName, :autoPayEnabled, :screenAudioUrl
+          :appid, :level1, :level2, :minWithdrawal, :complianceName, :autoPayEnabled, :screenAudioUrl, :homeConfig
         )
         ON DUPLICATE KEY UPDATE appid = appid`,
         {
@@ -391,7 +503,8 @@ function createStore(pool = createPool()) {
           minWithdrawal: Number(fallback?.min_withdrawal ?? 10),
           complianceName: String(fallback?.compliance_name || "Invite").slice(0, 20),
           autoPayEnabled: Boolean(fallback?.auto_pay_enabled),
-          screenAudioUrl: String(fallback?.screen_audio_url || "")
+          screenAudioUrl: String(fallback?.screen_audio_url || ""),
+          homeConfig: jsonField(normalizeHomeConfig(parseDbJson(fallback?.home_config, null)), defaultHomeConfig())
         }
       );
       row = await one(conn, "SELECT * FROM app_settings WHERE appid = :appid", { appid: scopedAppId });
@@ -404,17 +517,137 @@ function createStore(pool = createPool()) {
     const username = cleanText(body.username, "", 64);
     const password = String(body.password || "");
     if (!username || !password) throw appError(401, "Account or password is incorrect");
-    const row = await one(pool, "SELECT * FROM admin_users WHERE username = :username AND status = 'active'", { username });
+    const row = await one(pool, `
+      SELECT *
+      FROM admin_users
+      WHERE status = 'active' AND (username = :username OR phone = :username)
+      ORDER BY username = :username DESC, id DESC
+      LIMIT 1
+    `, { username });
     if (row) {
       if (!verifyAdminPassword(password, row.password_hash)) throw appError(401, "Account or password is incorrect");
-      return { username: row.username, appid: normalizeAppId(row.appid) };
+      return adminUserRow(row);
     }
     const envUser = process.env.ADMIN_USERNAME || "";
     const envPassword = process.env.ADMIN_PASSWORD || "";
     if (envUser && envPassword && username === envUser && password === envPassword) {
-      return { username: envUser, appid: defaultAppId() };
+      return {
+        id: 0,
+        username: envUser,
+        phone: "",
+        display_name: envUser,
+        role: "super",
+        appid: defaultAppId(),
+        status: "active"
+      };
     }
     throw appError(401, "Account or password is incorrect");
+  }
+
+  async function listAgentAdmins(adminOrAppid = "") {
+    const scope = assertSuperAdmin(adminOrAppid);
+    const rows = await many(pool, `
+      SELECT au.*,
+        (SELECT COUNT(*) FROM acquisition_campaigns ac WHERE ac.appid = au.appid AND ac.owner_admin_id = au.id) campaign_count
+      FROM admin_users au
+      WHERE au.appid = :appid AND au.role = 'agent'
+      ORDER BY au.created_at DESC, au.id DESC
+      LIMIT 300
+    `, { appid: scope.appid });
+    return rows.map(row => ({
+      ...adminUserRow(row),
+      campaign_count: Number(row.campaign_count || 0)
+    }));
+  }
+
+  async function saveAgentAdmin(body = {}, adminOrAppid = "") {
+    const scope = assertSuperAdmin(adminOrAppid);
+    const id = Number(body.id || 0);
+    const phone = cleanText(body.phone, "", 32);
+    const username = cleanText(body.username || phone, "", 64);
+    const displayName = cleanText(body.display_name || username || phone, "", 80);
+    const password = String(body.password || "");
+    const status = enumValue(body.status, ["active", "disabled"], "active");
+    if (!username || !phone) throw appError(422, "手机号和登录账号必填");
+    if (!id && password.length < 6) throw appError(422, "新增代理商密码至少 6 位");
+    return tx(pool, async conn => {
+      const duplicate = await one(conn, `
+        SELECT id
+        FROM admin_users
+        WHERE username = :username AND id <> :id
+        LIMIT 1
+      `, { username, id: id || 0 });
+      if (duplicate) throw appError(409, "登录账号已存在");
+      if (id) {
+        const existing = await one(conn, "SELECT * FROM admin_users WHERE id = :id AND appid = :appid AND role = 'agent' FOR UPDATE", {
+          id,
+          appid: scope.appid
+        });
+        if (!existing) throw appError(404, "代理商账号不存在");
+        const passwordSql = password ? ", password_hash = :passwordHash" : "";
+        await conn.query(
+          `UPDATE admin_users SET
+             username = :username,
+             phone = :phone,
+             display_name = :displayName,
+             status = :status
+             ${passwordSql}
+           WHERE id = :id AND appid = :appid AND role = 'agent'`,
+          {
+            id,
+            appid: scope.appid,
+            username,
+            phone,
+            displayName,
+            status,
+            passwordHash: password ? hashAdminPassword(password) : existing.password_hash
+          }
+        );
+        return adminUserRow(await one(conn, "SELECT * FROM admin_users WHERE id = :id", { id }));
+      }
+      const [result] = await conn.query(
+        `INSERT INTO admin_users (
+          appid, username, phone, display_name, password_hash, role, parent_admin_id, status
+        ) VALUES (
+          :appid, :username, :phone, :displayName, :passwordHash, 'agent', :parentAdminId, :status
+        )`,
+        {
+          appid: scope.appid,
+          username,
+          phone,
+          displayName,
+          passwordHash: hashAdminPassword(password),
+          parentAdminId: scope.adminId || null,
+          status
+        }
+      );
+      return adminUserRow(await one(conn, "SELECT * FROM admin_users WHERE id = :id", { id: result.insertId }));
+    });
+  }
+
+  async function deleteAgentAdmin(agentId, adminOrAppid = "") {
+    const scope = assertSuperAdmin(adminOrAppid);
+    const id = assertId(agentId, "代理商账号 ID");
+    return tx(pool, async conn => {
+      const existing = await one(conn, "SELECT * FROM admin_users WHERE id = :id AND appid = :appid AND role = 'agent' FOR UPDATE", {
+        id,
+        appid: scope.appid
+      });
+      if (!existing) throw appError(404, "代理商账号不存在");
+      await conn.query("DELETE FROM admin_users WHERE id = :id AND appid = :appid AND role = 'agent'", { id, appid: scope.appid });
+      const rows = await many(conn, `
+        SELECT au.*,
+          (SELECT COUNT(*) FROM acquisition_campaigns ac WHERE ac.appid = au.appid AND ac.owner_admin_id = au.id) campaign_count
+        FROM admin_users au
+        WHERE au.appid = :appid AND au.role = 'agent'
+        ORDER BY au.created_at DESC, au.id DESC
+        LIMIT 300
+      `, { appid: scope.appid });
+      return rows.map(row => ({
+        ...adminUserRow(row),
+        campaign_count: Number(row.campaign_count || 0)
+      }));
+    });
   }
 
   async function getUser(userId, conn = pool, appid = "") {
@@ -835,11 +1068,10 @@ function createStore(pool = createPool()) {
       if (!existing) throw appError(404, "商品不存在");
       const usage = await one(conn, `
         SELECT
-          (SELECT COUNT(*) FROM acquisition_campaigns WHERE product_id = :id AND appid = :appid) campaign_count,
           (SELECT COUNT(*) FROM orders WHERE product_id = :id AND appid = :appid) order_count
       `, { id, appid: scopedAppId });
-      if (Number(usage.campaign_count || 0) || Number(usage.order_count || 0)) {
-        throw appError(409, "商品已经被拓客宝活动或订单引用，不能直接删除，请先处理关联数据");
+      if (Number(usage.order_count || 0)) {
+        throw appError(409, "商品已经被订单引用，不能直接删除，请先处理关联订单");
       }
       await conn.query("DELETE FROM products WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
       const rows = await many(conn, "SELECT * FROM products WHERE appid = :appid ORDER BY id DESC", { appid: scopedAppId });
@@ -878,16 +1110,6 @@ function createStore(pool = createPool()) {
     return `
       SELECT
         ac.*,
-        p.title product_title, p.subtitle product_subtitle, p.product_no product_no, p.barcode product_barcode,
-        p.category product_category, p.brand product_brand, p.unit product_unit,
-        p.market_price product_market_price, p.price product_price, p.cost_price product_cost_price,
-        p.stock product_stock, p.sales product_sales, p.status product_status, p.commission_rate product_commission_rate,
-        p.image_url product_image_url, p.images_json product_images_json, p.detail_html product_detail_html,
-        p.description product_description, p.weight product_weight, p.min_buy_qty product_min_buy_qty,
-        p.per_order_limit product_per_order_limit, p.per_user_limit product_per_user_limit,
-        p.is_virtual product_is_virtual, p.no_refund_after_pay product_no_refund_after_pay,
-        p.freight_template product_freight_template, p.delivery_methods product_delivery_methods,
-        p.vip_enabled product_vip_enabled, p.created_at product_created_at,
         (SELECT COUNT(*) FROM acquisition_qrcodes q WHERE q.campaign_id = ac.id) qrcode_count,
         (SELECT COUNT(*) FROM acquisition_relations r WHERE r.campaign_id = ac.id AND r.appid = ac.appid AND r.unlocked_at IS NULL) relation_count,
         (
@@ -903,19 +1125,23 @@ function createStore(pool = createPool()) {
           WHERE ao.campaign_id = ac.id AND ao.appid = ac.appid AND c.status <> 'canceled'
         ) reward_total
       FROM acquisition_campaigns ac
-      LEFT JOIN products p ON p.id = ac.product_id AND p.appid = ac.appid
     `;
   }
 
-  async function listAcquisitionCampaigns({ status = "", keyword = "", appid = "" } = {}) {
+  async function listAcquisitionCampaigns({ status = "", keyword = "", appid = "", ownerAdminId = null } = {}) {
     const scopedAppId = normalizeAppId(appid);
     const filters = ["ac.appid = :appid"];
     const params = { appid: scopedAppId, keyword: `%${cleanText(keyword, "", 80)}%` };
+    const ownerId = Number(ownerAdminId || 0);
+    if (ownerId > 0) {
+      filters.push("ac.owner_admin_id = :ownerAdminId");
+      params.ownerAdminId = ownerId;
+    }
     if (status) {
       filters.push("ac.status = :status");
       params.status = enumValue(status, ["draft", "published", "ended", "expired"], "");
     }
-    if (cleanText(keyword)) filters.push("(ac.name LIKE :keyword OR p.title LIKE :keyword OR p.product_no LIKE :keyword)");
+    if (cleanText(keyword)) filters.push("(ac.name LIKE :keyword OR ac.description LIKE :keyword)");
     const rows = await many(pool, `
       ${campaignSelect()}
       ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}
@@ -926,10 +1152,16 @@ function createStore(pool = createPool()) {
   }
 
   async function getAcquisitionCampaign(campaignId, conn = pool, appid = "") {
-    const scopedAppId = normalizeAppId(appid);
+    const scope = normalizeAdminScope(appid);
+    const scopedAppId = scope.appid;
     const id = assertId(campaignId, "拓客宝活动 ID");
     const appFilter = scopedAppId ? " AND ac.appid = :appid" : "";
-    const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id${appFilter}`, { id, appid: scopedAppId });
+    const ownerFilter = scope.ownerAdminId ? " AND ac.owner_admin_id = :ownerAdminId" : "";
+    const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id${appFilter}${ownerFilter}`, {
+      id,
+      appid: scopedAppId,
+      ownerAdminId: scope.ownerAdminId
+    });
     if (!row) throw appError(404, "拓客宝活动不存在");
     const campaign = campaignRow(row);
     campaign.qrcodes = (await many(conn, "SELECT * FROM acquisition_qrcodes WHERE campaign_id = :id ORDER BY type, id", { id })).map(qrcodeRow);
@@ -946,14 +1178,13 @@ function createStore(pool = createPool()) {
     const scopedAppId = normalizeAppId(appid);
     const params = { appid: scopedAppId, keyword: `%${cleanText(keyword, "", 80)}%` };
     const filters = ["ac.appid = :appid", "ac.status = 'published'", "ac.start_at <= UTC_TIMESTAMP()", "ac.end_at >= UTC_TIMESTAMP()"];
-    if (cleanText(keyword)) filters.push("(ac.name LIKE :keyword OR p.title LIKE :keyword OR p.product_no LIKE :keyword)");
+    if (cleanText(keyword)) filters.push("(ac.name LIKE :keyword OR ac.description LIKE :keyword)");
     const rows = await many(pool, `
       ${campaignSelect()}
       WHERE ${filters.join(" AND ")}
       ORDER BY ac.created_at DESC, ac.id DESC
     `, params);
-    const campaigns = rows.map(campaignRow);
-    return campaigns.slice(0, 1);
+    return rows.map(campaignRow);
   }
 
   async function getActiveAcquisitionCampaign(userId = null, scene = "", appid = "") {
@@ -1013,19 +1244,15 @@ function createStore(pool = createPool()) {
   }
 
   async function createAcquisitionCampaign(body, appid = "") {
-    const scopedAppId = normalizeAppId(appid || body.appid);
+    const scope = normalizeAdminScope(appid || body.appid);
+    const scopedAppId = scope.appid;
     const payload = campaignPayload(body);
-    if (!payload.name || !payload.productId || payload.leadPrice <= 0) throw appError(422, "活动主题、引流商品和引流价必填");
-    const product = await one(pool, "SELECT id FROM products WHERE id = :id AND appid = :appid", { id: payload.productId, appid: scopedAppId });
-    if (!product) throw appError(404, "引流商品不存在");
+    if (!payload.name || payload.leadPrice <= 0) throw appError(422, "活动主题和引流价必填");
     return tx(pool, async conn => {
-      if (payload.status === "published") {
-        await conn.query("UPDATE acquisition_campaigns SET status = 'ended' WHERE appid = :appid AND status = 'published'", { appid: scopedAppId });
-      }
       const [result] = await conn.query(
         `INSERT INTO acquisition_campaigns (
-          appid, name, description, product_id, start_at, end_at, hide_time, stock, lead_price, settle_price,
-          per_user_limit, per_order_limit, delivery_methods, free_shipping, show_store_address,
+          appid, owner_admin_id, name, description, product_id, start_at, end_at, hide_time, stock, lead_price, settle_price,
+          per_user_limit, per_order_limit, delivery_methods, free_shipping, show_store_address, pickup_address,
           verify_at_order_store, member_tag, post_pay_address, relation_mode, default_inviter_id,
           reward_issue_way, reward_permission, reward_rule, reward_level1, reward_level2, direct_pay_way,
           reward_multiple_enabled, reward_step_enabled, team_reward_enabled, team_reward_level1,
@@ -1034,8 +1261,8 @@ function createStore(pool = createPool()) {
           customer_service_qrcode, background_music, poster_config, form_schema, virtual_sold_count,
           virtual_share_count, virtual_browse_count, virtual_invite_count, virtual_rankings, status
         ) VALUES (
-          :appid, :name, :description, :productId, :startAt, :endAt, :hideTime, :stock, :leadPrice, :settlePrice,
-          :perUserLimit, :perOrderLimit, :deliveryMethods, :freeShipping, :showStoreAddress,
+          :appid, :ownerAdminId, :name, :description, :productId, :startAt, :endAt, :hideTime, :stock, :leadPrice, :settlePrice,
+          :perUserLimit, :perOrderLimit, :deliveryMethods, :freeShipping, :showStoreAddress, :pickupAddress,
           :verifyAtOrderStore, :memberTag, :postPayAddress, :relationMode, :defaultInviterId,
           :rewardIssueWay, :rewardPermission, :rewardRule, :rewardLevel1, :rewardLevel2, :directPayWay,
           :rewardMultipleEnabled, :rewardStepEnabled, :teamRewardEnabled, :teamRewardLevel1,
@@ -1044,23 +1271,25 @@ function createStore(pool = createPool()) {
           :customerServiceQrcode, :backgroundMusic, :posterConfig, :formSchema, :virtualSoldCount,
           :virtualShareCount, :virtualBrowseCount, :virtualInviteCount, :virtualRankings, :status
         )`,
-        { ...payload, appid: scopedAppId }
+        { ...payload, appid: scopedAppId, ownerAdminId: scope.ownerAdminId }
       );
-      return getAcquisitionCampaign(result.insertId, conn, scopedAppId);
+      return getAcquisitionCampaign(result.insertId, conn, scope);
     });
   }
 
   async function updateAcquisitionCampaign(campaignId, body, appid = "") {
-    const scopedAppId = normalizeAppId(appid || body.appid);
+    const scope = normalizeAdminScope(appid || body.appid);
+    const scopedAppId = scope.appid;
     const id = assertId(campaignId, "拓客宝活动 ID");
-    const existing = await one(pool, "SELECT * FROM acquisition_campaigns WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
+    const existing = await one(pool, `
+      SELECT *
+      FROM acquisition_campaigns
+      WHERE id = :id AND appid = :appid ${scope.ownerAdminId ? "AND owner_admin_id = :ownerAdminId" : ""}
+    `, { id, appid: scopedAppId, ownerAdminId: scope.ownerAdminId });
     if (!existing) throw appError(404, "拓客宝活动不存在");
     const payload = campaignPayload(body, existing);
-    if (!payload.name || !payload.productId || payload.leadPrice <= 0) throw appError(422, "活动主题、引流商品和引流价必填");
+    if (!payload.name || payload.leadPrice <= 0) throw appError(422, "活动主题和引流价必填");
     return tx(pool, async conn => {
-      if (payload.status === "published") {
-        await conn.query("UPDATE acquisition_campaigns SET status = 'ended' WHERE appid = :appid AND status = 'published' AND id <> :id", { id, appid: scopedAppId });
-      }
       await conn.query(
         `UPDATE acquisition_campaigns SET
           name = :name,
@@ -1077,6 +1306,7 @@ function createStore(pool = createPool()) {
           delivery_methods = :deliveryMethods,
           free_shipping = :freeShipping,
           show_store_address = :showStoreAddress,
+          pickup_address = :pickupAddress,
           verify_at_order_store = :verifyAtOrderStore,
           member_tag = :memberTag,
           post_pay_address = :postPayAddress,
@@ -1116,49 +1346,56 @@ function createStore(pool = createPool()) {
          WHERE id = :id AND appid = :appid`,
         { ...payload, id, appid: scopedAppId }
       );
-      return getAcquisitionCampaign(id, conn, scopedAppId);
+      return getAcquisitionCampaign(id, conn, scope);
     });
   }
 
   async function patchAcquisitionCampaign(campaignId, body, appid = "") {
-    const scopedAppId = normalizeAppId(appid || body.appid);
+    const scope = normalizeAdminScope(appid || body.appid);
+    const scopedAppId = scope.appid;
     const id = assertId(campaignId, "拓客宝活动 ID");
     const action = String(body.action || "");
     const statusMap = { publish: "published", end: "ended", expire: "expired", draft: "draft" };
     if (!statusMap[action]) throw appError(422, "未知活动操作");
     return tx(pool, async conn => {
-      if (action === "publish") {
-        await conn.query("UPDATE acquisition_campaigns SET status = 'ended' WHERE appid = :appid AND status = 'published' AND id <> :id", { id, appid: scopedAppId });
-      }
-      await conn.query("UPDATE acquisition_campaigns SET status = :status WHERE id = :id AND appid = :appid", { id, appid: scopedAppId, status: statusMap[action] });
-      return getAcquisitionCampaign(id, conn, scopedAppId);
+      const [result] = await conn.query(
+        `UPDATE acquisition_campaigns
+         SET status = :status
+         WHERE id = :id AND appid = :appid ${scope.ownerAdminId ? "AND owner_admin_id = :ownerAdminId" : ""}`,
+        { id, appid: scopedAppId, status: statusMap[action], ownerAdminId: scope.ownerAdminId }
+      );
+      if (!result.affectedRows) throw appError(404, "拓客宝活动不存在");
+      return getAcquisitionCampaign(id, conn, scope);
     });
   }
 
   async function deleteAcquisitionCampaign(campaignId, appid = "") {
-    const scopedAppId = normalizeAppId(appid);
+    const scope = normalizeAdminScope(appid);
+    const scopedAppId = scope.appid;
     const id = assertId(campaignId, "拓客宝活动 ID");
     return tx(pool, async conn => {
-      const existing = await one(conn, "SELECT id FROM acquisition_campaigns WHERE id = :id AND appid = :appid FOR UPDATE", { id, appid: scopedAppId });
+      const existing = await one(conn, `
+        SELECT id
+        FROM acquisition_campaigns
+        WHERE id = :id AND appid = :appid ${scope.ownerAdminId ? "AND owner_admin_id = :ownerAdminId" : ""}
+        FOR UPDATE
+      `, { id, appid: scopedAppId, ownerAdminId: scope.ownerAdminId });
       if (!existing) throw appError(404, "拓客宝活动不存在");
-      const usage = await one(conn, `
-        SELECT
-          (SELECT COUNT(*) FROM acquisition_orders WHERE campaign_id = :id AND appid = :appid) order_count,
-          (SELECT COUNT(*) FROM acquisition_relations WHERE campaign_id = :id AND appid = :appid) relation_count,
-          (SELECT COUNT(*) FROM acquisition_lottery_records WHERE campaign_id = :id AND appid = :appid) lottery_count
-      `, { id, appid: scopedAppId });
-      if (Number(usage.order_count || 0) || Number(usage.relation_count || 0) || Number(usage.lottery_count || 0)) {
-        throw appError(409, "拓客宝活动已经产生订单、关系链或抽奖记录，不能直接删除，请改为结束活动");
-      }
+      // 是否删除交给商家自己判断：订单/关系链/抽奖记录/引流码都随活动级联删除，
+      // 已有的普通订单不受影响（orders 表不依赖活动）。
       await conn.query("DELETE FROM acquisition_campaigns WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
-      const rows = await many(conn, `${campaignSelect()} WHERE ac.appid = :appid ORDER BY ac.id DESC`, { appid: scopedAppId });
+      const rows = await many(
+        conn,
+        `${campaignSelect()} WHERE ac.appid = :appid ${scope.ownerAdminId ? "AND ac.owner_admin_id = :ownerAdminId" : ""} ORDER BY ac.id DESC`,
+        { appid: scopedAppId, ownerAdminId: scope.ownerAdminId }
+      );
       return rows.map(campaignRow);
     });
   }
 
   async function saveAcquisitionQrcode(campaignId, body, appid = "") {
-    const scopedAppId = normalizeAppId(appid || body.appid);
-    const campaign = await getAcquisitionCampaign(campaignId, pool, scopedAppId);
+    const scope = normalizeAdminScope(appid || body.appid);
+    const campaign = await getAcquisitionCampaign(campaignId, pool, scope);
     const type = enumValue(body.type, ["personal", "group"], "personal");
     const payload = {
       campaignId: campaign.id,
@@ -1194,23 +1431,24 @@ function createStore(pool = createPool()) {
         payload
       );
     }
-    return getAcquisitionCampaign(campaign.id, pool, scopedAppId);
+    return getAcquisitionCampaign(campaign.id, pool, scope);
   }
 
   async function deleteAcquisitionQrcode(campaignId, qrcodeId, appid = "") {
-    const scopedAppId = normalizeAppId(appid);
-    const campaign = await getAcquisitionCampaign(campaignId, pool, scopedAppId);
+    const scope = normalizeAdminScope(appid);
+    const campaign = await getAcquisitionCampaign(campaignId, pool, scope);
     await pool.query("DELETE FROM acquisition_qrcodes WHERE id = :qrcodeId AND campaign_id = :campaignId", {
       qrcodeId: assertId(qrcodeId, "引流码 ID"),
       campaignId: campaign.id
     });
-    return getAcquisitionCampaign(campaign.id, pool, scopedAppId);
+    return getAcquisitionCampaign(campaign.id, pool, scope);
   }
 
   async function listAcquisitionRelations(campaignId, appid = "") {
-    const scopedAppId = normalizeAppId(appid);
+    const scope = normalizeAdminScope(appid);
+    const scopedAppId = scope.appid;
     const id = assertId(campaignId, "拓客宝活动 ID");
-    await getAcquisitionCampaign(id, pool, scopedAppId);
+    await getAcquisitionCampaign(id, pool, scope);
     const rows = await many(pool, `
       SELECT
         r.*,
@@ -1245,17 +1483,19 @@ function createStore(pool = createPool()) {
   }
 
   async function listAcquisitionOrders(campaignId, appid = "") {
-    const scopedAppId = normalizeAppId(appid);
+    const scope = normalizeAdminScope(appid);
+    const scopedAppId = scope.appid;
     const id = assertId(campaignId, "拓客宝活动 ID");
-    await getAcquisitionCampaign(id, pool, scopedAppId);
+    await getAcquisitionCampaign(id, pool, scope);
     const rows = await loadOrderRows("JOIN acquisition_orders ao ON ao.order_id = o.id WHERE ao.campaign_id = :campaignId AND ao.appid = :appid AND o.appid = :appid", { campaignId: id, appid: scopedAppId });
     return rows.map(orderRow);
   }
 
   async function listAcquisitionRewards(campaignId, appid = "") {
-    const scopedAppId = normalizeAppId(appid);
+    const scope = normalizeAdminScope(appid);
+    const scopedAppId = scope.appid;
     const id = assertId(campaignId, "拓客宝活动 ID");
-    await getAcquisitionCampaign(id, pool, scopedAppId);
+    await getAcquisitionCampaign(id, pool, scope);
     const rows = await many(pool, `
       SELECT
         c.*,
@@ -1271,12 +1511,21 @@ function createStore(pool = createPool()) {
         p.is_virtual product_is_virtual, p.no_refund_after_pay product_no_refund_after_pay,
         p.freight_template product_freight_template, p.delivery_methods product_delivery_methods,
         p.vip_enabled product_vip_enabled, p.created_at product_created_at,
+        ac.id campaign_id, ac.name campaign_name, ac.description campaign_description,
+        ac.lead_price campaign_lead_price, ac.settle_price campaign_settle_price,
+        ac.stock campaign_stock, ac.sold_count campaign_sold_count,
+        ac.virtual_sold_count campaign_virtual_sold_count,
+        ac.share_cover campaign_share_cover, ac.detail_images campaign_detail_images,
+        ac.delivery_methods campaign_delivery_methods,
+        ac.per_order_limit campaign_per_order_limit, ac.per_user_limit campaign_per_user_limit,
+        ac.status campaign_status, ac.created_at campaign_created_at,
         buyer.nickname buyer_nickname, buyer.phone buyer_phone, buyer.avatar buyer_avatar,
         b.nickname beneficiary_nickname, b.phone beneficiary_phone, b.avatar beneficiary_avatar
       FROM acquisition_orders ao
       JOIN commissions c ON c.order_id = ao.order_id
       LEFT JOIN orders o ON o.id = c.order_id AND o.appid = :appid
       LEFT JOIN products p ON p.id = o.product_id AND p.appid = :appid
+      LEFT JOIN acquisition_campaigns ac ON ac.id = ao.campaign_id AND ac.appid = :appid
       LEFT JOIN users buyer ON buyer.id = c.buyer_id AND buyer.appid = :appid
       LEFT JOIN users b ON b.id = c.beneficiary_id AND b.appid = :appid
       WHERE ao.campaign_id = :id AND ao.appid = :appid AND c.appid = :appid
@@ -1287,9 +1536,10 @@ function createStore(pool = createPool()) {
   }
 
   async function acquisitionDashboard(campaignId, appid = "") {
-    const scopedAppId = normalizeAppId(appid);
+    const scope = normalizeAdminScope(appid);
+    const scopedAppId = scope.appid;
     const id = assertId(campaignId, "拓客宝活动 ID");
-    const campaign = await getAcquisitionCampaign(id, pool, scopedAppId);
+    const campaign = await getAcquisitionCampaign(id, pool, scope);
     const totals = await one(pool, `
       SELECT
         (SELECT COUNT(DISTINCT member_id) FROM acquisition_relations WHERE campaign_id = :id AND appid = :appid) visitors,
@@ -1401,11 +1651,22 @@ function createStore(pool = createPool()) {
         p.is_virtual product_is_virtual, p.no_refund_after_pay product_no_refund_after_pay,
         p.freight_template product_freight_template, p.delivery_methods product_delivery_methods,
         p.vip_enabled product_vip_enabled, p.created_at product_created_at,
+        lao.campaign_id campaign_id,
+        lac.name campaign_name, lac.description campaign_description,
+        lac.lead_price campaign_lead_price, lac.settle_price campaign_settle_price,
+        lac.stock campaign_stock, lac.sold_count campaign_sold_count,
+        lac.virtual_sold_count campaign_virtual_sold_count,
+        lac.share_cover campaign_share_cover, lac.detail_images campaign_detail_images,
+        lac.delivery_methods campaign_delivery_methods,
+        lac.per_order_limit campaign_per_order_limit, lac.per_user_limit campaign_per_user_limit,
+        lac.status campaign_status, lac.created_at campaign_created_at,
         u.openid user_openid, u.phone user_phone, u.nickname user_nickname, u.avatar user_avatar,
         u.parent_id user_parent_id, u.first_parent_id user_first_parent_id,
         u.distributor_status user_distributor_status, u.created_at user_created_at
       FROM orders o
       LEFT JOIN products p ON p.id = o.product_id AND (:appid IS NULL OR p.appid = :appid)
+      LEFT JOIN acquisition_orders lao ON lao.order_id = o.id AND (:appid IS NULL OR lao.appid = :appid)
+      LEFT JOIN acquisition_campaigns lac ON lac.id = lao.campaign_id AND (:appid IS NULL OR lac.appid = :appid)
       LEFT JOIN users u ON u.id = o.user_id AND (:appid IS NULL OR u.appid = :appid)
       ${whereSql}
       ORDER BY o.created_at DESC, o.id DESC
@@ -1413,7 +1674,7 @@ function createStore(pool = createPool()) {
     `, queryParams);
   }
 
-  async function listOrders({ userId = null, appid = "", page = 1, pageSize = 100 } = {}) {
+  async function listOrders({ userId = null, appid = "", ownerAdminId = null, page = 1, pageSize = 100 } = {}) {
     const filters = [];
     const params = {};
     if (appid) {
@@ -1423,6 +1684,10 @@ function createStore(pool = createPool()) {
     if (userId) {
       filters.push("o.user_id = :userId");
       params.userId = userId;
+    }
+    if (Number(ownerAdminId || 0) > 0) {
+      filters.push("lac.owner_admin_id = :ownerAdminId");
+      params.ownerAdminId = Number(ownerAdminId);
     }
     const rows = await loadOrderRows(filters.length ? `WHERE ${filters.join(" AND ")}` : "", params, pool, {
       page,
@@ -1989,10 +2254,12 @@ function createStore(pool = createPool()) {
       }
       const meta = await acquisitionOrderMeta(conn, order.id);
       await conn.query("UPDATE orders SET status = 'closed' WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
-      await conn.query(
-        "UPDATE products SET stock = stock + :quantity, sales = GREATEST(sales - :quantity, 0) WHERE id = :productId AND appid = :appid",
-        { quantity: order.quantity, productId: order.product_id, appid: scopedAppId }
-      );
+      if (order.product_id) {
+        await conn.query(
+          "UPDATE products SET stock = stock + :quantity, sales = GREATEST(sales - :quantity, 0) WHERE id = :productId AND appid = :appid",
+          { quantity: order.quantity, productId: order.product_id, appid: scopedAppId }
+        );
+      }
       if (meta) {
         await conn.query(
           "UPDATE acquisition_campaigns SET sold_count = GREATEST(sold_count - :quantity, 0) WHERE id = :campaignId AND appid = :appid",
@@ -2032,10 +2299,12 @@ function createStore(pool = createPool()) {
           "UPDATE orders SET status = 'closed' WHERE id = :id AND appid = :appid AND status = 'unpaid'",
           { id: order.id, appid: order.appid }
         );
-        await conn.query(
-          "UPDATE products SET stock = stock + :quantity, sales = GREATEST(sales - :quantity, 0) WHERE id = :productId AND appid = :appid",
-          { quantity: order.quantity, productId: order.product_id, appid: order.appid }
-        );
+        if (order.product_id) {
+          await conn.query(
+            "UPDATE products SET stock = stock + :quantity, sales = GREATEST(sales - :quantity, 0) WHERE id = :productId AND appid = :appid",
+            { quantity: order.quantity, productId: order.product_id, appid: order.appid }
+          );
+        }
         if (meta) {
           await conn.query(
             "UPDATE acquisition_campaigns SET sold_count = GREATEST(sold_count - :quantity, 0) WHERE id = :campaignId AND appid = :appid",
@@ -2063,9 +2332,11 @@ function createStore(pool = createPool()) {
     if (!buyer) throw appError(404, "用户不存在");
     await approveDistributorIfNeeded(conn, buyer.id, scopedAppId);
     buyer.distributor_status = "approved";
-    const product = await one(conn, "SELECT * FROM products WHERE id = :id AND appid = :appid", { id: order.product_id, appid: scopedAppId });
-    if (!product) throw appError(404, "商品不存在");
     const meta = await acquisitionOrderMeta(conn, order.id);
+    const product = order.product_id
+      ? await one(conn, "SELECT * FROM products WHERE id = :id AND appid = :appid", { id: order.product_id, appid: scopedAppId })
+      : null;
+    if (!meta && !product) throw appError(404, "商品不存在");
     let campaign = null;
     let relation = null;
     let commissions = [];
@@ -2134,7 +2405,7 @@ function createStore(pool = createPool()) {
       if (!buyer) throw appError(404, "用户不存在");
       await approveDistributorIfNeeded(conn, buyer.id, scopedAppId);
       buyer.distributor_status = "approved";
-      let productId = campaignId ? Number(body.product_id || 0) : assertId(body.product_id, "商品 ID");
+      let productId = campaignId ? null : assertId(body.product_id, "商品 ID");
       let campaign = null;
       if (campaignId) {
         const row = await one(conn, `${campaignSelect()} WHERE ac.id = :id AND ac.appid = :appid FOR UPDATE`, { id: assertId(campaignId, "拓客宝活动 ID"), appid: scopedAppId });
@@ -2146,20 +2417,32 @@ function createStore(pool = createPool()) {
         if (campaign.per_order_limit && quantity > campaign.per_order_limit) throw appError(409, `每单最多购买 ${campaign.per_order_limit} 件`);
         await assertCampaignUserLimit(conn, campaign, buyer.id, quantity, scopedAppId);
         if (Number(campaign.stock) - Number(campaign.sold_count || 0) < quantity) throw appError(409, "活动库存不足");
-        productId = campaign.product_id;
       }
-      const product = await one(conn, "SELECT * FROM products WHERE id = :id AND appid = :appid AND status = 'on' FOR UPDATE", { id: productId, appid: scopedAppId });
-      if (!product) throw appError(404, "商品不存在或已下架");
-      if (!campaign) await assertProductUserLimit(conn, product, buyer.id, quantity, scopedAppId);
-      if (Number(product.stock) < quantity) throw appError(409, "库存不足");
-      const orderAddress = await resolveOrderAddress(conn, buyer.id, body, scopedAppId);
+      const product = productId
+        ? await one(conn, "SELECT * FROM products WHERE id = :id AND appid = :appid AND status = 'on' FOR UPDATE", { id: productId, appid: scopedAppId })
+        : null;
+      if (!campaign && !product) throw appError(404, "商品不存在或已下架");
+      if (!campaign) {
+        await assertProductUserLimit(conn, product, buyer.id, quantity, scopedAppId);
+        if (Number(product.stock) < quantity) throw appError(409, "库存不足");
+      }
+// 到店自提的活动不需要买家填收货地址
+      const pickupOnly = Boolean(campaign)
+        && Array.isArray(campaign.delivery_methods)
+        && campaign.delivery_methods.length === 1
+        && campaign.delivery_methods[0] === "pickup";
+      const orderAddress = pickupOnly
+        ? { addressId: null, addressText: "" }
+        : await resolveOrderAddress(conn, buyer.id, body, scopedAppId);
 
       const amount = money(Number(campaign ? campaign.lead_price : product.price) * quantity);
-      const [productStockResult] = await conn.query(
-        "UPDATE products SET stock = stock - :quantity, sales = sales + :quantity WHERE id = :id AND appid = :appid AND stock >= :quantity",
-        { quantity, id: product.id, appid: scopedAppId }
-      );
-      if (!productStockResult.affectedRows) throw appError(409, "库存不足");
+      if (product) {
+        const [productStockResult] = await conn.query(
+          "UPDATE products SET stock = stock - :quantity, sales = sales + :quantity WHERE id = :id AND appid = :appid AND stock >= :quantity",
+          { quantity, id: product.id, appid: scopedAppId }
+        );
+        if (!productStockResult.affectedRows) throw appError(409, "库存不足");
+      }
       if (campaign) {
         const [stockResult] = await conn.query(
           `UPDATE acquisition_campaigns
@@ -2176,7 +2459,7 @@ function createStore(pool = createPool()) {
         {
           appid: scopedAppId,
           userId: buyer.id,
-          productId: product.id,
+          productId: product ? product.id : null,
           quantity,
           amount,
           address: orderAddress.addressText,
@@ -2296,19 +2579,85 @@ function createStore(pool = createPool()) {
     });
   }
 
+  // 我的中奖记录（下单抽奖写入 acquisition_lottery_records）
+  async function userLotteryRecords(userId, appid = "", limit = 100) {
+    const scopedAppId = normalizeAppId(appid);
+    const id = assertId(userId, "用户 ID");
+    const typeText = { thanks: "谢谢参与", cash: "现金红包", goods: "实物奖品", coupon: "优惠券" };
+    const recordStatusText = { pending: "待发放", issued: "已发放", failed: "发放失败" };
+    const orderStatusMap = { unpaid: "待支付", paid: "已付款", shipped: "已发货", received: "已收货", refunded: "已退款", closed: "已关闭" };
+    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 100));
+    const rows = await many(pool, `
+      SELECT
+        r.id, r.campaign_id, r.order_id, r.prize_name, r.prize_type, r.prize_image,
+        r.quantity, r.amount, r.status, r.created_at,
+        ac.name AS campaign_name, ac.share_cover AS campaign_cover,
+        o.status AS order_status, o.logistics_no, o.logistics_company
+      FROM acquisition_lottery_records r
+      LEFT JOIN acquisition_campaigns ac ON ac.id = r.campaign_id AND ac.appid = r.appid
+      LEFT JOIN orders o ON o.id = r.order_id AND o.appid = r.appid
+      WHERE r.user_id = :userId AND r.appid = :appid
+      ORDER BY r.id DESC
+      LIMIT ${safeLimit}
+    `, { userId: id, appid: scopedAppId });
+    return rows.map(row => ({
+      id: row.id,
+      campaign_id: row.campaign_id,
+      campaign_name: row.campaign_name || "",
+      campaign_cover: row.campaign_cover || "",
+      order_id: row.order_id,
+      prize_name: row.prize_name || "",
+      prize_type: row.prize_type || "thanks",
+      prize_type_text: typeText[row.prize_type] || "",
+      prize_image: row.prize_image || "",
+      quantity: Number(row.quantity || 0) || 1,
+      amount: money(row.amount || 0),
+      status: row.status,
+      status_text: recordStatusText[row.status] || "",
+      order_status: row.order_status || "",
+      order_status_text: orderStatusMap[row.order_status] || "",
+      logistics_no: row.logistics_no || "",
+      logistics_company: row.logistics_company || "",
+      created_at: row.created_at
+    }));
+  }
   async function patchOrder(orderId, body, appid = "") {
     const scopedAppId = normalizeAppId(appid || body.appid);
-    return tx(pool, async conn => {
+    let shippingReceipt = null;
+    const updated = await tx(pool, async conn => {
       const id = assertId(orderId, "订单 ID");
       const order = await one(conn, "SELECT * FROM orders WHERE id = :id AND appid = :appid FOR UPDATE", { id, appid: scopedAppId });
       if (!order) throw appError(404, "订单不存在");
       if (body.action === "ship") {
         if (order.status !== "paid") throw appError(409, "只有已付款订单可以发货");
-        await conn.query("UPDATE orders SET status = 'shipped', logistics_no = :logisticsNo WHERE id = :id AND appid = :appid", {
-          id,
-          appid: scopedAppId,
-          logisticsNo: String(body.logistics_no || `SF${Date.now()}`).trim()
-        });
+        const logisticsNo = String(body.logistics_no || `SF${Date.now()}`).trim();
+        const logisticsCompany = cleanText(body.logistics_company || body.express_company, "SF", 32).toUpperCase();
+        await conn.query(
+          "UPDATE orders SET status = 'shipped', logistics_no = :logisticsNo, logistics_company = :logisticsCompany WHERE id = :id AND appid = :appid",
+          { id, appid: scopedAppId, logisticsNo, logisticsCompany }
+        );
+        // 发货信息上报微信订单中心所需的上下文（在事务外调用微信接口）
+        const buyer = await one(
+          conn,
+          "SELECT id, openid FROM users WHERE id = :userId AND appid = :appid",
+          { userId: order.user_id, appid: scopedAppId }
+        );
+        const product = order.product_id
+          ? await one(
+              conn,
+              "SELECT title, is_virtual FROM products WHERE id = :productId AND appid = :appid",
+              { productId: order.product_id, appid: scopedAppId }
+            )
+          : null;
+        shippingReceipt = {
+          transactionId: String(order.transaction_id || ""),
+          outTradeNo: String(order.out_trade_no || ""),
+          openid: String(buyer && buyer.openid || ""),
+          trackingNo: logisticsNo,
+          expressCompany: logisticsCompany,
+          itemDesc: cleanText(product && product.title, "商品", 120),
+          isVirtual: Boolean(product && product.is_virtual)
+        };
       } else if (body.action === "refund") {
         if (order.status === "refunded") throw appError(409, "订单已经退款");
         await conn.query("UPDATE orders SET status = 'refunded' WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
@@ -2324,11 +2673,13 @@ function createStore(pool = createPool()) {
            WHERE w.status IN ('pending','approved') AND w.appid = :appid AND c.appid = :appid`,
           { id, appid: scopedAppId }
         );
-        await conn.query("UPDATE products SET stock = stock + :quantity WHERE id = :productId AND appid = :appid", {
-          quantity: order.quantity,
-          productId: order.product_id,
-          appid: scopedAppId
-        });
+        if (order.product_id) {
+          await conn.query("UPDATE products SET stock = stock + :quantity WHERE id = :productId AND appid = :appid", {
+            quantity: order.quantity,
+            productId: order.product_id,
+            appid: scopedAppId
+          });
+        }
       } else if (body.action === "receive") {
         await conn.query("UPDATE orders SET status = 'received', received_at = UTC_TIMESTAMP() WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
         await conn.query(
@@ -2341,6 +2692,23 @@ function createStore(pool = createPool()) {
       const rows = await loadOrderRows("WHERE o.id = :id AND o.appid = :appid", { id, appid: scopedAppId }, conn);
       return orderRow(rows[0]);
     });
+
+    // 发货后把物流信息上报微信订单中心（用户才能在微信「订单与卡包」看到这笔订单）。
+    // 上报失败不影响本地发货状态，只在返回值里带上 shipping_warning 供后台提示。
+    if (shippingReceipt) {
+      try {
+        let tenant = { appid: scopedAppId };
+        try {
+          tenant = resolveTenant(scopedAppId) || tenant;
+        } catch {
+          // 多租户未配置时用兜底 tenant（appid），下面若缺 secret 会以 warning 返回
+        }
+        await uploadShippingInfo(shippingReceipt, tenant);
+      } catch (error) {
+        return { ...updated, shipping_warning: error.message };
+      }
+    }
+    return updated;
   }
 
   async function userAvailableBalance(userId, conn = pool, appid = "") {
@@ -2351,7 +2719,7 @@ function createStore(pool = createPool()) {
         (
           SELECT COALESCE(SUM(w.amount), 0)
           FROM withdrawals w
-          WHERE w.user_id = :userId AND w.appid = :appid AND w.status <> 'rejected'
+          WHERE w.user_id = :userId AND w.appid = :appid AND w.status IN ('pending','approved','paidout')
         ) locked
       FROM commissions c
       WHERE c.beneficiary_id = :userId AND c.appid = :appid
@@ -2359,7 +2727,7 @@ function createStore(pool = createPool()) {
     return money(Math.max(0, Number(rows[0].gross || 0) - Number(rows[0].locked || 0)));
   }
 
-  async function listCommissions({ userId = null, appid = "", page = 1, pageSize = 100 } = {}) {
+  async function listCommissions({ userId = null, appid = "", ownerAdminId = null, page = 1, pageSize = 100 } = {}) {
     const filters = [];
     const params = { appid: null };
     const limit = publicListLimit(pageSize, 100, 500);
@@ -2372,6 +2740,10 @@ function createStore(pool = createPool()) {
       filters.push("c.beneficiary_id = :userId");
       params.userId = userId;
     }
+    if (Number(ownerAdminId || 0) > 0) {
+      filters.push("lac.owner_admin_id = :ownerAdminId");
+      params.ownerAdminId = Number(ownerAdminId);
+    }
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
     const rows = await many(pool, `
       SELECT
@@ -2381,11 +2753,22 @@ function createStore(pool = createPool()) {
         p.stock product_stock, p.sales product_sales, p.status product_status,
         p.commission_rate product_commission_rate, p.image_url product_image_url,
         p.description product_description, p.created_at product_created_at,
+        lao.campaign_id campaign_id,
+        lac.name campaign_name, lac.description campaign_description,
+        lac.lead_price campaign_lead_price, lac.settle_price campaign_settle_price,
+        lac.stock campaign_stock, lac.sold_count campaign_sold_count,
+        lac.virtual_sold_count campaign_virtual_sold_count,
+        lac.share_cover campaign_share_cover, lac.detail_images campaign_detail_images,
+        lac.delivery_methods campaign_delivery_methods,
+        lac.per_order_limit campaign_per_order_limit, lac.per_user_limit campaign_per_user_limit,
+        lac.status campaign_status, lac.created_at campaign_created_at,
         buyer.nickname buyer_nickname, buyer.phone buyer_phone, buyer.avatar buyer_avatar,
         b.nickname beneficiary_nickname, b.phone beneficiary_phone, b.avatar beneficiary_avatar
       FROM commissions c
       LEFT JOIN orders o ON o.id = c.order_id AND (:appid IS NULL OR o.appid = :appid)
       LEFT JOIN products p ON p.id = o.product_id AND (:appid IS NULL OR p.appid = :appid)
+      LEFT JOIN acquisition_orders lao ON lao.order_id = o.id AND (:appid IS NULL OR lao.appid = :appid)
+      LEFT JOIN acquisition_campaigns lac ON lac.id = lao.campaign_id AND (:appid IS NULL OR lac.appid = :appid)
       LEFT JOIN users buyer ON buyer.id = c.buyer_id AND (:appid IS NULL OR buyer.appid = :appid)
       LEFT JOIN users b ON b.id = c.beneficiary_id AND (:appid IS NULL OR b.appid = :appid)
       ${where}
@@ -2470,8 +2853,12 @@ function createStore(pool = createPool()) {
     return tx(pool, async conn => {
       const userId = assertId(body.user_id, "用户 ID");
       const amount = money(body.amount);
-      await getUser(userId, conn, scopedAppId);
+      const user = await one(conn, "SELECT id FROM users WHERE id = :id AND appid = :appid FOR UPDATE", { id: userId, appid: scopedAppId });
+      if (!user) throw appError(404, "用户不存在");
       const appSettings = await settings(conn, scopedAppId);
+      if (amount <= 0) {
+        throw appError(422, "提现金额必须大于 0");
+      }
       if (amount < Number(appSettings.min_withdrawal || 0)) {
         throw appError(422, `最低提现金额为 ${appSettings.min_withdrawal} 元`);
       }
@@ -2842,6 +3229,188 @@ function createStore(pool = createPool()) {
     };
   }
 
+  async function merchantDashboard(adminOrAppid = "") {
+    const scope = normalizeAdminScope(adminOrAppid);
+    const ownerFilter = scope.ownerAdminId ? "AND ac.owner_admin_id = :ownerAdminId" : "";
+    const params = { appid: scope.appid, ownerAdminId: scope.ownerAdminId };
+    const totals = await one(pool, `
+      SELECT
+        COUNT(DISTINCT ac.id) campaign_count,
+        COUNT(DISTINCT CASE WHEN ac.status = 'published' THEN ac.id END) published_count,
+        COUNT(DISTINCT CASE WHEN o.status IN ('paid','shipped','received') THEN o.id END) paid_order_count,
+        COALESCE(SUM(CASE WHEN o.status IN ('paid','shipped','received') THEN o.amount ELSE 0 END), 0) paid_amount,
+        COUNT(DISTINCT CASE WHEN o.status IN ('paid','shipped','received') AND o.created_at >= CURDATE() THEN o.id END) today_order_count,
+        COALESCE(SUM(CASE WHEN o.status IN ('paid','shipped','received') AND o.created_at >= CURDATE() THEN o.amount ELSE 0 END), 0) today_amount
+      FROM acquisition_campaigns ac
+      LEFT JOIN acquisition_orders ao ON ao.campaign_id = ac.id AND ao.appid = ac.appid
+      LEFT JOIN orders o ON o.id = ao.order_id AND o.appid = ac.appid
+      WHERE ac.appid = :appid ${ownerFilter}
+    `, params) || {};
+    const campaigns = await listAcquisitionCampaigns({
+      appid: scope.appid,
+      ownerAdminId: scope.ownerAdminId,
+      status: ""
+    });
+    const orders = await listOrders({
+      appid: scope.appid,
+      ownerAdminId: scope.ownerAdminId,
+      pageSize: 20
+    });
+    return {
+      admin: {
+        id: scope.adminId,
+        appid: scope.appid,
+        role: scope.role
+      },
+      campaign_count: Number(totals.campaign_count || 0),
+      published_count: Number(totals.published_count || 0),
+      paid_order_count: Number(totals.paid_order_count || 0),
+      paid_amount: money(totals.paid_amount || 0),
+      today_order_count: Number(totals.today_order_count || 0),
+      today_amount: money(totals.today_amount || 0),
+      campaigns,
+      orders
+    };
+  }
+
+  function isPaidOrder(order = {}) {
+    return ["paid", "shipped", "received"].includes(order.status);
+  }
+
+  function customerCampaignStats(customerId, beneficiaryId, orders = [], rewards = []) {
+    const buyerId = Number(customerId || 0);
+    const ownerId = Number(beneficiaryId || 0);
+    const buyerOrders = orders.filter(item => Number(item.user_id || 0) === buyerId);
+    const paidOrders = buyerOrders.filter(isPaidOrder);
+    const buyerRewards = rewards.filter(item => (
+      Number(item.buyer_id || 0) === buyerId &&
+      Number(item.beneficiary_id || 0) === ownerId &&
+      item.status !== "canceled"
+    ));
+    return {
+      order_count: buyerOrders.length,
+      paid_order_count: paidOrders.length,
+      paid_amount: money(paidOrders.reduce((sum, item) => sum + Number(item.amount || 0), 0)),
+      reward_amount: money(buyerRewards.reduce((sum, item) => sum + Number(item.amount || 0), 0)),
+      last_order_id: buyerOrders[0]?.id || null,
+      last_order_status: buyerOrders[0]?.status || "",
+      last_order_status_text: buyerOrders[0]?.status_text || "",
+      last_order_at: buyerOrders[0]?.created_at || null
+    };
+  }
+
+  function withdrawalSummaryRows(rows = []) {
+    return rows.map(row => ({
+      id: row.id,
+      user_id: row.user_id,
+      amount: money(row.amount),
+      status: row.status,
+      status_text: statusText[row.status] || row.status,
+      note: row.note || "",
+      created_at: row.created_at,
+      reviewed_at: row.reviewed_at,
+      review_note: row.review_note || ""
+    }));
+  }
+
+  function personalCampaignData(userId, relations = [], rewards = [], orders = [], withdrawals = []) {
+    const id = Number(userId || 0);
+    if (!id) {
+      return {
+        user_id: 0,
+        direct_count: 0,
+        indirect_count: 0,
+        order_count: 0,
+        paid_order_count: 0,
+        paid_amount: money(0),
+        reward_total: money(0),
+        pending: money(0),
+        withdrawable: money(0),
+        direct_customers: [],
+        indirect_customers: [],
+        rewards: [],
+        orders: [],
+        withdrawals: []
+      };
+    }
+    const directCustomers = relations
+      .filter(item => item.inviter && Number(item.inviter.id) === id)
+      .map(item => ({
+        ...item.member,
+        entered_at: item.entered_at,
+        ...customerCampaignStats(item.member?.id, id, orders, rewards)
+      }));
+    const indirectCustomers = relations
+      .filter(item => item.parent_inviter && Number(item.parent_inviter.id) === id)
+      .map(item => ({
+        ...item.member,
+        entered_at: item.entered_at,
+        direct_parent: item.inviter,
+        ...customerCampaignStats(item.member?.id, id, orders, rewards)
+      }));
+    const personalRewards = rewards.filter(item => Number(item.beneficiary_id || 0) === id && item.status !== "canceled");
+    const personalOrders = orders.filter(item => Number(item.user_id || 0) === id);
+    const paidOrders = personalOrders.filter(isPaidOrder);
+    const total = personalRewards.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const pending = personalRewards
+      .filter(item => item.status === "pending")
+      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const withdrawable = personalRewards
+      .filter(item => item.status === "withdrawable")
+      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const lockedWithdrawals = withdrawals
+      .filter(item => withdrawalLocksBalance(item.status))
+      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    return {
+      user_id: id,
+      direct_count: directCustomers.length,
+      indirect_count: indirectCustomers.length,
+      order_count: personalOrders.length,
+      paid_order_count: paidOrders.length,
+      paid_amount: money(paidOrders.reduce((sum, item) => sum + Number(item.amount || 0), 0)),
+      reward_total: money(total),
+      pending: money(pending),
+      withdrawable: money(Math.max(0, withdrawable - lockedWithdrawals)),
+      direct_customers: directCustomers,
+      indirect_customers: indirectCustomers,
+      rewards: personalRewards,
+      orders: personalOrders,
+      withdrawals: withdrawalSummaryRows(withdrawals)
+    };
+  }
+
+  async function merchantCampaignData(campaignId, adminOrAppid = "", options = {}) {
+    const scope = normalizeAdminScope(adminOrAppid);
+    const userId = Number(options.userId || 0);
+    const [campaignDashboard, relations, orders, rewards, withdrawals, appSettings] = await Promise.all([
+      acquisitionDashboard(campaignId, scope),
+      listAcquisitionRelations(campaignId, scope),
+      listAcquisitionOrders(campaignId, scope),
+      listAcquisitionRewards(campaignId, scope),
+      userId ? listUserWithdrawals(userId, scope.appid) : [],
+      settings(pool, scope.appid)
+    ]);
+    const directCustomers = relations.filter(item => item.inviter).map(item => item.member);
+    const indirectCustomers = relations.filter(item => item.parent_inviter).map(item => ({
+      ...item.member,
+      direct_parent: item.inviter,
+      parent_inviter: item.parent_inviter
+    }));
+    return {
+      dashboard: campaignDashboard,
+      campaign: campaignDashboard.campaign,
+      relations,
+      direct_customers: directCustomers,
+      indirect_customers: indirectCustomers,
+      orders,
+      rewards,
+      settings: {
+        min_withdrawal: Number(appSettings.min_withdrawal || 0)
+      },
+      personal: personalCampaignData(userId, relations, rewards, orders, withdrawals)
+    };
+  }
+
   async function screenDashboard(appid = "") {
     const scopedAppId = normalizeAppId(appid);
     const ttl = screenDashboardCacheMs();
@@ -2915,7 +3484,7 @@ function createStore(pool = createPool()) {
           (
             SELECT COALESCE(SUM(w.amount), 0)
             FROM withdrawals w
-            WHERE w.user_id = u.id AND w.appid = :appid AND w.status <> 'rejected'
+            WHERE w.user_id = u.id AND w.appid = :appid AND w.status IN ('pending','approved','paidout')
           ),
           0
         ) available_balance
@@ -2939,6 +3508,94 @@ function createStore(pool = createPool()) {
       total_commission: money(row.total_commission),
       available_balance: money(row.available_balance)
     }));
+  }
+
+  async function listUsers(options = {}) {
+    const scopedAppId = normalizeAppId(options.appid);
+    const keyword = cleanText(options.keyword, "", 80);
+    const distributorStatus = ["pending", "approved", "rejected"].includes(String(options.distributorStatus || ""))
+      ? String(options.distributorStatus)
+      : "";
+    const page = positiveInt(options.page, 1, 1000000);
+    const pageSize = publicListLimit(options.pageSize, 30, 100);
+    const offset = (page - 1) * pageSize;
+    const where = ["u.appid = :appid"];
+    const params = {
+      appid: scopedAppId,
+      keyword: `%${keyword}%`
+    };
+    if (keyword) {
+      where.push("(u.nickname LIKE :keyword OR u.phone LIKE :keyword OR CAST(u.id AS CHAR) LIKE :keyword)");
+    }
+    if (distributorStatus) {
+      where.push("u.distributor_status = :distributorStatus");
+      params.distributorStatus = distributorStatus;
+    }
+
+    const whereSql = where.join(" AND ");
+    const [countRow, rows] = await Promise.all([
+      one(pool, `SELECT COUNT(*) total FROM users u WHERE ${whereSql}`, params),
+      many(pool, `
+        SELECT
+          u.*,
+          p.nickname parent_nickname,
+          p.phone parent_phone,
+          p.avatar parent_avatar,
+          COALESCE(dc.direct_count, 0) direct_count,
+          COALESCE(c.total_commission, 0) total_commission,
+          GREATEST(
+            COALESCE(c.withdrawable_commission, 0) - COALESCE(w.locked_amount, 0),
+            0
+          ) available_balance
+        FROM users u
+        LEFT JOIN users p
+          ON p.id = u.parent_id AND p.appid = :appid
+        LEFT JOIN (
+          SELECT parent_id, COUNT(*) direct_count
+          FROM users
+          WHERE appid = :appid AND parent_id IS NOT NULL
+          GROUP BY parent_id
+        ) dc ON dc.parent_id = u.id
+        LEFT JOIN (
+          SELECT
+            beneficiary_id,
+            SUM(CASE WHEN status <> 'canceled' THEN amount ELSE 0 END) total_commission,
+            SUM(CASE WHEN status = 'withdrawable' THEN amount ELSE 0 END) withdrawable_commission
+          FROM commissions
+          WHERE appid = :appid
+          GROUP BY beneficiary_id
+        ) c ON c.beneficiary_id = u.id
+        LEFT JOIN (
+          SELECT user_id, SUM(amount) locked_amount
+          FROM withdrawals
+          WHERE appid = :appid AND status IN ('pending', 'approved', 'paidout')
+          GROUP BY user_id
+        ) w ON w.user_id = u.id
+        WHERE ${whereSql}
+        ORDER BY u.created_at DESC, u.id DESC
+        LIMIT ${pageSize} OFFSET ${offset}
+      `, params)
+    ]);
+
+    const total = Number(countRow?.total || 0);
+    return {
+      items: rows.map(row => ({
+        ...normalizeUser(row),
+        parent: row.parent_nickname ? {
+          id: row.parent_id,
+          nickname: row.parent_nickname,
+          phone: row.parent_phone || "",
+          avatar: row.parent_avatar || ""
+        } : null,
+        direct_count: Number(row.direct_count || 0),
+        total_commission: money(row.total_commission),
+        available_balance: money(row.available_balance)
+      })),
+      total,
+      page,
+      page_size: pageSize,
+      page_count: Math.ceil(total / pageSize)
+    };
   }
 
   async function patchDistributor(userId, body, appid = "") {
@@ -2980,27 +3637,44 @@ function createStore(pool = createPool()) {
     }));
   }
 
+  async function listUserWithdrawals(userId, appid = "", options = {}) {
+    const scopedAppId = normalizeAppId(appid);
+    const id = assertId(userId, "用户 ID");
+    const limit = publicListLimit(options.limit || options.pageSize, 100, 500);
+    return many(pool, `
+      SELECT *
+      FROM withdrawals
+      WHERE appid = :appid AND user_id = :id
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${limit}
+    `, { appid: scopedAppId, id });
+  }
+
   async function patchWithdrawal(withdrawalId, body, appid = "") {
     const scopedAppId = normalizeAppId(appid || body.appid);
     return tx(pool, async conn => {
       const id = assertId(withdrawalId, "提现 ID");
       const withdrawal = await one(conn, "SELECT * FROM withdrawals WHERE id = :id AND appid = :appid FOR UPDATE", { id, appid: scopedAppId });
       if (!withdrawal) throw appError(404, "提现申请不存在");
-      if (body.action !== "pay" && withdrawal.status !== "pending") throw appError(409, "该提现申请已经审核");
-      if (body.action === "pay" && !["pending", "approved"].includes(withdrawal.status)) throw appError(409, "该提现申请不能打款");
 
       let status;
       let note;
-      const appSettings = await settings(conn, scopedAppId);
       if (body.action === "approve") {
-        status = appSettings.auto_pay_enabled ? "paidout" : "approved";
-        note = String(body.review_note || "审核通过，等待企业付款").slice(0, 120);
+        if (withdrawal.status !== "pending") throw appError(409, "只有待审核提现可以通过");
+        status = "approved";
+        note = String(body.review_note || "审核通过，等待管理员打款").slice(0, 120);
       } else if (body.action === "pay") {
+        if (!["pending", "approved"].includes(withdrawal.status)) throw appError(409, "该提现申请不能打款");
         status = "paidout";
-        note = String(body.review_note || "已模拟企业付款到零钱").slice(0, 120);
+        note = String(body.review_note || "已确认打款，微信自动出款待接入").slice(0, 120);
       } else if (body.action === "reject") {
+        if (withdrawal.status !== "pending") throw appError(409, "只有待审核提现可以拒绝");
         status = "rejected";
         note = String(body.review_note || "审核未通过").slice(0, 120);
+      } else if (body.action === "fail") {
+        if (!["pending", "approved"].includes(withdrawal.status)) throw appError(409, "该提现申请不能标记失败");
+        status = "failed";
+        note = String(body.review_note || "出款失败，金额已退回可提现").slice(0, 120);
       } else {
         throw appError(422, "未知提现操作");
       }
@@ -3015,10 +3689,12 @@ function createStore(pool = createPool()) {
   async function updateSettings(body, appid = "") {
     const scopedAppId = normalizeAppId(appid || body.appid);
     await settings(pool, scopedAppId);
+    const homeConfig = normalizeHomeConfig(body.home_config);
     await pool.query(
       `UPDATE app_settings
        SET commission_level_1 = :level1, commission_level_2 = :level2, min_withdrawal = :minWithdrawal,
-           compliance_name = :complianceName, auto_pay_enabled = :autoPayEnabled, screen_audio_url = :screenAudioUrl
+           compliance_name = :complianceName, auto_pay_enabled = :autoPayEnabled, screen_audio_url = :screenAudioUrl,
+           home_config = :homeConfig
        WHERE appid = :appid`,
       {
         appid: scopedAppId,
@@ -3027,7 +3703,8 @@ function createStore(pool = createPool()) {
         minWithdrawal: Number(body.min_withdrawal),
         complianceName: String(body.compliance_name || "推荐有礼").trim().slice(0, 20),
         autoPayEnabled: Boolean(body.auto_pay_enabled),
-        screenAudioUrl: cleanText(body.screen_audio_url, "", 600)
+        screenAudioUrl: cleanText(body.screen_audio_url, "", 600),
+        homeConfig: jsonField(homeConfig, defaultHomeConfig())
       }
     );
     return settings(pool, scopedAppId);
@@ -3041,6 +3718,11 @@ function createStore(pool = createPool()) {
     ping,
     close,
     verifyAdminLogin,
+    listAgentAdmins,
+    saveAgentAdmin,
+    deleteAgentAdmin,
+    merchantDashboard,
+    merchantCampaignData,
     login,
     wechatLogin,
     updateUserProfile,
@@ -3065,6 +3747,7 @@ function createStore(pool = createPool()) {
     createAcquisitionCampaign,
     updateAcquisitionCampaign,
     patchAcquisitionCampaign,
+    userLotteryRecords,
     deleteAcquisitionCampaign,
     saveAcquisitionQrcode,
     deleteAcquisitionQrcode,
@@ -3091,6 +3774,7 @@ function createStore(pool = createPool()) {
     screenDashboard,
     screenHeartbeat,
     listDistributors,
+    listUsers,
     patchDistributor,
     listCommissions,
     listWithdrawals,

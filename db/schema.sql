@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
   compliance_name VARCHAR(20) NOT NULL DEFAULT '推荐有礼',
   auto_pay_enabled TINYINT(1) NOT NULL DEFAULT 0,
   screen_audio_url VARCHAR(600) NOT NULL DEFAULT '',
+  home_config JSON NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_app_settings_appid (appid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -15,12 +16,19 @@ CREATE TABLE IF NOT EXISTS admin_users (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   appid VARCHAR(32) NOT NULL DEFAULT '',
   username VARCHAR(64) NOT NULL,
+  phone VARCHAR(32) NOT NULL DEFAULT '',
+  display_name VARCHAR(80) NOT NULL DEFAULT '',
   password_hash VARCHAR(160) NOT NULL,
+  role ENUM('super','agent') NOT NULL DEFAULT 'super',
+  parent_admin_id BIGINT UNSIGNED NULL,
   status ENUM('active','disabled') NOT NULL DEFAULT 'active',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_admin_users_username (username),
-  KEY idx_admin_users_appid (appid, status)
+  KEY idx_admin_users_appid (appid, status),
+  KEY idx_admin_users_phone (appid, phone),
+  KEY idx_admin_users_parent (parent_admin_id),
+  CONSTRAINT fk_admin_users_parent FOREIGN KEY (parent_admin_id) REFERENCES admin_users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -109,9 +117,10 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE TABLE IF NOT EXISTS acquisition_campaigns (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   appid VARCHAR(32) NOT NULL DEFAULT '',
+  owner_admin_id BIGINT UNSIGNED NULL,
   name VARCHAR(160) NOT NULL,
   description VARCHAR(255) NOT NULL DEFAULT '',
-  product_id BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NULL,
   start_at TIMESTAMP NOT NULL,
   end_at TIMESTAMP NOT NULL,
   hide_time TINYINT(1) NOT NULL DEFAULT 0,
@@ -124,6 +133,7 @@ CREATE TABLE IF NOT EXISTS acquisition_campaigns (
   delivery_methods JSON NULL,
   free_shipping TINYINT(1) NOT NULL DEFAULT 1,
   show_store_address TINYINT(1) NOT NULL DEFAULT 0,
+  pickup_address VARCHAR(255) NOT NULL DEFAULT '',
   verify_at_order_store TINYINT(1) NOT NULL DEFAULT 0,
   member_tag VARCHAR(64) NOT NULL DEFAULT '',
   post_pay_address TINYINT(1) NOT NULL DEFAULT 0,
@@ -164,9 +174,11 @@ CREATE TABLE IF NOT EXISTS acquisition_campaigns (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_acquisition_status_time (status, start_at, end_at),
   KEY idx_acquisition_app_status_time (appid, status, start_at, end_at),
+  KEY idx_acquisition_owner_status_time (appid, owner_admin_id, status, start_at, end_at),
   KEY idx_acquisition_product (product_id),
   KEY idx_acquisition_default_inviter (default_inviter_id),
-  CONSTRAINT fk_acquisition_product FOREIGN KEY (product_id) REFERENCES products(id),
+  CONSTRAINT fk_acquisition_owner_admin FOREIGN KEY (owner_admin_id) REFERENCES admin_users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_acquisition_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
   CONSTRAINT fk_acquisition_default_inviter FOREIGN KEY (default_inviter_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -250,7 +262,7 @@ CREATE TABLE IF NOT EXISTS orders (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   appid VARCHAR(32) NOT NULL DEFAULT '',
   user_id BIGINT UNSIGNED NOT NULL,
-  product_id BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NULL,
   quantity INT UNSIGNED NOT NULL,
   amount DECIMAL(10, 2) NOT NULL,
   status ENUM('unpaid','paid','shipped','received','refunded','closed') NOT NULL DEFAULT 'unpaid',
@@ -261,6 +273,7 @@ CREATE TABLE IF NOT EXISTS orders (
   address VARCHAR(255) NOT NULL DEFAULT '',
   address_id BIGINT UNSIGNED NULL,
   logistics_no VARCHAR(80) NOT NULL DEFAULT '',
+  logistics_company VARCHAR(32) NOT NULL DEFAULT '',
   expires_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   paid_at TIMESTAMP NULL DEFAULT NULL,
@@ -277,7 +290,7 @@ CREATE TABLE IF NOT EXISTS orders (
   KEY idx_orders_product (product_id),
   KEY idx_orders_address (address_id),
   CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id),
-  CONSTRAINT fk_orders_product FOREIGN KEY (product_id) REFERENCES products(id),
+  CONSTRAINT fk_orders_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
   CONSTRAINT fk_orders_address FOREIGN KEY (address_id) REFERENCES user_addresses(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -369,7 +382,7 @@ CREATE TABLE IF NOT EXISTS withdrawals (
   appid VARCHAR(32) NOT NULL DEFAULT '',
   user_id BIGINT UNSIGNED NOT NULL,
   amount DECIMAL(10, 2) NOT NULL,
-  status ENUM('pending','approved','rejected','paidout') NOT NULL DEFAULT 'pending',
+  status ENUM('pending','approved','rejected','paidout','failed') NOT NULL DEFAULT 'pending',
   note VARCHAR(120) NOT NULL DEFAULT '',
   review_note VARCHAR(160) NOT NULL DEFAULT '',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -57,16 +57,7 @@ function readBody(req, maxBytes = 1024 * 1024) {
   });
 }
 
-async function saveAdminUpload(body = {}, appid = "", options = {}) {
-  const raw = String(body.data_url || body.data || "");
-  const match = raw.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)$/i);
-  if (!match) {
-    const error = new Error("上传文件格式不正确");
-    error.statusCode = 422;
-    throw error;
-  }
-  const mime = match[1].toLowerCase().replace("image/jpg", "image/jpeg");
-  const allowed = {
+const UPLOAD_RULES = {
     "image/png": { ext: ".png", max: 5 * 1024 * 1024, type: "image" },
     "image/jpeg": { ext: ".jpg", max: 5 * 1024 * 1024, type: "image" },
     "image/webp": { ext: ".webp", max: 5 * 1024 * 1024, type: "image" },
@@ -78,14 +69,86 @@ async function saveAdminUpload(body = {}, appid = "", options = {}) {
     "audio/ogg": { ext: ".ogg", max: 20 * 1024 * 1024, type: "audio" },
     "audio/mp4": { ext: ".m4a", max: 20 * 1024 * 1024, type: "audio" },
     "audio/x-m4a": { ext: ".m4a", max: 20 * 1024 * 1024, type: "audio" }
+};
+
+function readRawBuffer(req, maxBytes = 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let length = 0;
+    req.on("data", chunk => {
+      length += chunk.length;
+      if (length > maxBytes) {
+        const error = new Error(`文件大小不能超过 ${Math.floor(maxBytes / 1024 / 1024)}MB`);
+        error.statusCode = 413;
+        reject(error);
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+function uploadFormatError(message = "上传文件格式不正确") {
+  const error = new Error(message);
+  error.statusCode = 422;
+  return error;
+}
+
+// 小程序 wx.uploadFile 走 multipart/form-data，这里取出第一个文件段。
+function parseMultipartUpload(raw, contentType = "") {
+  const boundaryMatch = String(contentType).match(/boundary="?([^";]+)"?/i);
+  if (!boundaryMatch) throw uploadFormatError();
+  const boundary = `--${boundaryMatch[1]}`;
+  const text = raw.toString("latin1");
+  const firstBoundary = text.indexOf(boundary);
+  if (firstBoundary < 0) throw uploadFormatError();
+  const headerStart = firstBoundary + boundary.length;
+  const headerEnd = text.indexOf("\r\n\r\n", headerStart);
+  if (headerEnd < 0) throw uploadFormatError();
+  const headerText = text.slice(headerStart, headerEnd);
+  const bodyStart = headerEnd + 4;
+  const nextBoundary = text.indexOf(`\r\n${boundary}`, bodyStart);
+  const bodyEnd = nextBoundary < 0 ? text.length : nextBoundary;
+  if (bodyEnd <= bodyStart) throw uploadFormatError();
+  const mimeMatch = headerText.match(/content-type:\s*([^\r\n;]+)/i);
+  return {
+    buffer: raw.subarray(bodyStart, bodyEnd),
+    mime: mimeMatch ? mimeMatch[1].trim().toLowerCase() : ""
   };
+}
+
+// 微信返回的临时文件后缀不一定可信，用文件头确认真实类型。
+function sniffUploadMime(buffer) {
+  const head = buffer.subarray(0, 12);
+  if (head.subarray(0, 4).toString("hex") === "89504e47") return "image/png";
+  if (head.subarray(0, 3).toString("hex") === "ffd8ff") return "image/jpeg";
+  if (head.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  if (head.subarray(0, 3).toString("ascii") === "GIF") return "image/gif";
+  if (head.subarray(0, 3).toString("hex") === "494433") return "audio/mpeg";
+  if (["fffb", "fff3", "fff2"].some(prefix => head.subarray(0, 2).toString("hex") === prefix)) return "audio/mpeg";
+  if (head.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WAVE") return "audio/wav";
+  if (head.subarray(0, 4).toString("ascii") === "OggS") return "audio/ogg";
+  if (head.toString("ascii").includes("ftyp")) return "audio/mp4";
+  return "";
+}
+
+async function storeUploadBuffer(input = {}, appid = "", options = {}) {
+  const buffer = Buffer.isBuffer(input.buffer) ? input.buffer : Buffer.alloc(0);
+  let mime = String(input.mime || "").toLowerCase().replace("image/jpg", "image/jpeg");
+  const allowed = UPLOAD_RULES;
+  if (!allowed[mime] && buffer.length) {
+    const sniffed = sniffUploadMime(buffer);
+    if (sniffed) mime = sniffed;
+  }
   const rule = allowed[mime];
   if (!rule || (options.imageOnly && rule.type !== "image")) {
     const error = new Error(options.imageOnly ? "只支持上传 PNG、JPG、WebP、GIF 图片" : "只支持上传 PNG、JPG、WebP、GIF 图片或 MP3、WAV、OGG、M4A 音频");
     error.statusCode = 422;
     throw error;
   }
-  const buffer = Buffer.from(match[2].replace(/\s/g, ""), "base64");
   const maxSize = Number(options.maxBytes || process.env.ADMIN_UPLOAD_MAX_BYTES || rule.max);
   if (!buffer.length || buffer.length > maxSize) {
     const error = new Error(`文件大小不能超过 ${Math.floor(maxSize / 1024 / 1024)}MB`);
@@ -124,6 +187,28 @@ async function saveAdminUpload(body = {}, appid = "", options = {}) {
     type: rule.type,
     size: buffer.length
   };
+}
+
+async function saveAdminUpload(body = {}, appid = "", options = {}) {
+  const raw = String(body.data_url || body.data || "");
+  const match = raw.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)$/i);
+  if (!match) throw uploadFormatError();
+  return storeUploadBuffer({
+    buffer: Buffer.from(match[2].replace(/\s/g, ""), "base64"),
+    mime: match[1]
+  }, appid, options);
+}
+
+// 同一路由同时兼容 JSON(data_url) 与 wx.uploadFile 的 multipart 上传。
+async function saveUploadRequest(req, appid = "", options = {}) {
+  const contentType = String(req.headers["content-type"] || "");
+  const maxBytes = Number(options.maxBytes || process.env.ADMIN_UPLOAD_BODY_MAX_BYTES || 32 * 1024 * 1024);
+  if (/^multipart\/form-data/i.test(contentType)) {
+    const raw = await readRawBuffer(req, maxBytes);
+    const file = parseMultipartUpload(raw, contentType);
+    return storeUploadBuffer(file, appid, options);
+  }
+  return saveAdminUpload(await readBody(req, maxBytes), appid, options);
 }
 
 async function saveUserAvatarUpload(body = {}, appid = "") {
@@ -191,6 +276,15 @@ function legacyAdminAppId() {
   return process.env.ADMIN_APPID || process.env.WECHAT_LEGACY_APP_ID || DEFAULT_LEGACY_APPID;
 }
 
+function adminOwnerId(admin = {}) {
+  const id = Number(admin.id || 0);
+  return admin.role === "agent" && id > 0 ? id : null;
+}
+
+function isSuperAdmin(admin = {}) {
+  return admin.role !== "agent" || !Number(admin.id || 0);
+}
+
 function hasAdminAuth(req) {
   const username = process.env.ADMIN_USERNAME || "";
   const password = process.env.ADMIN_PASSWORD || "";
@@ -203,7 +297,7 @@ function hasAdminAuth(req) {
   if (!username || !password) return false;
   const expectedToken = crypto.createHash("sha256").update(`${username}:${password}`).digest("hex");
   if (token && safeEqualText(token, expectedToken)) {
-    req.admin = { username, appid: legacyAdminAppId() };
+    req.admin = { id: 0, username, appid: legacyAdminAppId(), role: "super" };
     return true;
   }
   const header = req.headers.authorization || "";
@@ -213,14 +307,14 @@ function hasAdminAuth(req) {
   if (splitAt < 0) return false;
   const ok = safeEqualText(decoded.slice(0, splitAt), username) && safeEqualText(decoded.slice(splitAt + 1), password);
   if (ok) {
-    req.admin = { username, appid: legacyAdminAppId() };
+    req.admin = { id: 0, username, appid: legacyAdminAppId(), role: "super" };
   }
   return ok;
 }
 
 function requireAdmin(req, res, isApi = false) {
   if (process.env.NODE_ENV !== "production" && !process.env.ADMIN_PASSWORD) {
-    req.admin = { username: "dev", appid: legacyAdminAppId() };
+    req.admin = { id: 0, username: "dev", appid: legacyAdminAppId(), role: "super" };
     return true;
   }
   if (hasAdminAuth(req)) return true;
@@ -233,6 +327,17 @@ function requireAdmin(req, res, isApi = false) {
     "Cache-Control": "no-store"
   });
   res.end("后台需要登录");
+  return false;
+}
+
+function requireMerchant(req, res) {
+  const token = (req.headers["x-merchant-token"] || "").toString();
+  const merchant = verifyAdminToken(token);
+  if (merchant && merchant.appid) {
+    req.merchant = merchant;
+    return true;
+  }
+  fail(res, 401, "商家中心需要登录");
   return false;
 }
 
@@ -330,7 +435,12 @@ function createServer({ store }) {
     }
 
     if (req.method === "GET" && pathname === "/api/app/config") {
-      ok(res, publicTenant(resolveTenantFromRequest(req, searchParams)));
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      const appSettings = await store.settings(undefined, tenant.appid);
+      ok(res, {
+        ...publicTenant(tenant),
+        home_config: appSettings.home_config || null
+      });
       return;
     }
 
@@ -348,10 +458,62 @@ function createServer({ store }) {
       const admin = await store.verifyAdminLogin(body);
       ok(res, {
         token: signAdminToken(admin),
+        id: admin.id || 0,
         username: admin.username,
+        phone: admin.phone || "",
+        display_name: admin.display_name || admin.username,
+        role: admin.role || "super",
         appid: admin.appid
       });
       return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/merchant/login") {
+      const body = await readBody(req);
+      const merchant = await store.verifyAdminLogin(body);
+      ok(res, {
+        token: signAdminToken(merchant),
+        id: merchant.id || 0,
+        username: merchant.username,
+        phone: merchant.phone || "",
+        display_name: merchant.display_name || merchant.username,
+        role: merchant.role || "agent",
+        appid: merchant.appid
+      });
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/merchant/dashboard") {
+      ok(res, await store.merchantDashboard(req.merchant));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/merchant/uploads") {
+      ok(res, await saveUploadRequest(req, req.merchant.appid));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/merchant/campaigns") {
+      ok(res, await store.createAcquisitionCampaign(await readBody(req), req.merchant));
+      return;
+    }
+
+    const merchantCampaignId = matchId(pathname, "/api/merchant/campaigns/");
+    if (merchantCampaignId) {
+      if (req.method === "GET") {
+        const userId = Number(searchParams.get("user_id") || 0);
+        if (userId) await requireUserSession(req, { appid: req.merchant.appid }, userId);
+        ok(res, await store.merchantCampaignData(merchantCampaignId, req.merchant, { userId }));
+        return;
+      }
+      if (req.method === "PUT") {
+        ok(res, await store.updateAcquisitionCampaign(merchantCampaignId, await readBody(req), req.merchant));
+        return;
+      }
+      if (req.method === "DELETE") {
+        ok(res, await store.deleteAcquisitionCampaign(merchantCampaignId, req.merchant));
+        return;
+      }
     }
 
     if (req.method === "POST" && pathname === "/api/wechat/login") {
@@ -509,6 +671,12 @@ function createServer({ store }) {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/api/lottery/records") {
+      const tenant = resolveTenantFromRequest(req, searchParams);
+      await requireUserSession(req, tenant, searchParams.get("user_id"));
+      ok(res, await store.userLotteryRecords(Number(searchParams.get("user_id")) || 0, tenant.appid));
+      return;
+    }
     const orderId = matchId(pathname, "/api/orders/");
     if (req.method === "POST" && orderId && pathname.endsWith("/pay/sync")) {
       const tenant = resolveTenantFromRequest(req, searchParams);
@@ -592,8 +760,27 @@ function createServer({ store }) {
     }
 
     if (req.method === "POST" && pathname === "/api/admin/uploads") {
-      const uploadBodyLimit = Number(process.env.ADMIN_UPLOAD_BODY_MAX_BYTES || 32 * 1024 * 1024);
-      ok(res, await saveAdminUpload(await readBody(req, uploadBodyLimit), req.admin.appid));
+      ok(res, await saveUploadRequest(req, req.admin.appid));
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/admin/agents") {
+      ok(res, await store.listAgentAdmins(req.admin));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/admin/agents") {
+      ok(res, await store.saveAgentAdmin(await readBody(req), req.admin));
+      return;
+    }
+
+    const adminAgentId = matchId(pathname, "/api/admin/agents/");
+    if (req.method === "PUT" && adminAgentId) {
+      ok(res, await store.saveAgentAdmin({ ...(await readBody(req)), id: adminAgentId }, req.admin));
+      return;
+    }
+    if (req.method === "DELETE" && adminAgentId) {
+      ok(res, await store.deleteAgentAdmin(adminAgentId, req.admin));
       return;
     }
 
@@ -621,13 +808,14 @@ function createServer({ store }) {
       ok(res, await store.listAcquisitionCampaigns({
         status: searchParams.get("status") || "",
         keyword: searchParams.get("keyword") || "",
-        appid: req.admin.appid
+        appid: req.admin.appid,
+        ownerAdminId: adminOwnerId(req.admin)
       }));
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/admin/acquisition/campaigns") {
-      ok(res, await store.createAcquisitionCampaign(await readBody(req), req.admin.appid));
+      ok(res, await store.createAcquisitionCampaign(await readBody(req), req.admin));
       return;
     }
 
@@ -650,51 +838,51 @@ function createServer({ store }) {
     const acquisitionId = matchId(pathname, "/api/admin/acquisition/campaigns/");
     if (acquisitionId) {
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
-        ok(res, await store.getAcquisitionCampaign(acquisitionId, undefined, req.admin.appid));
+        ok(res, await store.getAcquisitionCampaign(acquisitionId, undefined, req.admin));
         return;
       }
       if (req.method === "PUT" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
-        ok(res, await store.updateAcquisitionCampaign(acquisitionId, await readBody(req), req.admin.appid));
+        ok(res, await store.updateAcquisitionCampaign(acquisitionId, await readBody(req), req.admin));
         return;
       }
       if (req.method === "PATCH" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
-        ok(res, await store.patchAcquisitionCampaign(acquisitionId, await readBody(req), req.admin.appid));
+        ok(res, await store.patchAcquisitionCampaign(acquisitionId, await readBody(req), req.admin));
         return;
       }
       if (req.method === "DELETE" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}`) {
-        ok(res, await store.deleteAcquisitionCampaign(acquisitionId, req.admin.appid));
+        ok(res, await store.deleteAcquisitionCampaign(acquisitionId, req.admin));
         return;
       }
       if (req.method === "POST" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/qrcodes`) {
-        ok(res, await store.saveAcquisitionQrcode(acquisitionId, await readBody(req), req.admin.appid));
+        ok(res, await store.saveAcquisitionQrcode(acquisitionId, await readBody(req), req.admin));
         return;
       }
       const qrcodePrefix = `/api/admin/acquisition/campaigns/${acquisitionId}/qrcodes/`;
       const qrcodeId = matchId(pathname, qrcodePrefix);
       if (req.method === "DELETE" && qrcodeId) {
-        ok(res, await store.deleteAcquisitionQrcode(acquisitionId, qrcodeId, req.admin.appid));
+        ok(res, await store.deleteAcquisitionQrcode(acquisitionId, qrcodeId, req.admin));
         return;
       }
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/relations`) {
-        ok(res, await store.listAcquisitionRelations(acquisitionId, req.admin.appid));
+        ok(res, await store.listAcquisitionRelations(acquisitionId, req.admin));
         return;
       }
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/orders`) {
-        ok(res, await store.listAcquisitionOrders(acquisitionId, req.admin.appid));
+        ok(res, await store.listAcquisitionOrders(acquisitionId, req.admin));
         return;
       }
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/rewards`) {
-        ok(res, await store.listAcquisitionRewards(acquisitionId, req.admin.appid));
+        ok(res, await store.listAcquisitionRewards(acquisitionId, req.admin));
         return;
       }
       if (req.method === "GET" && pathname === `/api/admin/acquisition/campaigns/${acquisitionId}/dashboard`) {
-        ok(res, await store.acquisitionDashboard(acquisitionId, req.admin.appid));
+        ok(res, await store.acquisitionDashboard(acquisitionId, req.admin));
         return;
       }
     }
 
     if (req.method === "GET" && pathname === "/api/admin/orders") {
-      ok(res, await store.listOrders({ userId: null, appid: req.admin.appid }));
+      ok(res, await store.listOrders({ userId: null, appid: req.admin.appid, ownerAdminId: adminOwnerId(req.admin) }));
       return;
     }
 
@@ -709,6 +897,17 @@ function createServer({ store }) {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/api/admin/users") {
+      ok(res, await store.listUsers({
+        appid: req.admin.appid,
+        keyword: searchParams.get("keyword") || "",
+        distributorStatus: searchParams.get("distributor_status") || "",
+        page: searchParams.get("page") || 1,
+        pageSize: searchParams.get("page_size") || 30
+      }));
+      return;
+    }
+
     const distributorId = matchId(pathname, "/api/admin/distributors/");
     if (req.method === "PATCH" && distributorId) {
       ok(res, await store.patchDistributor(distributorId, await readBody(req), req.admin.appid));
@@ -716,17 +915,25 @@ function createServer({ store }) {
     }
 
     if (req.method === "GET" && pathname === "/api/admin/commissions") {
-      ok(res, await store.listCommissions({ appid: req.admin.appid }));
+      ok(res, await store.listCommissions({ appid: req.admin.appid, ownerAdminId: adminOwnerId(req.admin) }));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/admin/withdrawals") {
+      if (!isSuperAdmin(req.admin)) {
+        fail(res, 403, "只有总管理员可以查看提现申请");
+        return;
+      }
       ok(res, await store.listWithdrawals(req.admin.appid));
       return;
     }
 
     const withdrawalId = matchId(pathname, "/api/admin/withdrawals/");
     if (req.method === "PATCH" && withdrawalId) {
+      if (!isSuperAdmin(req.admin)) {
+        fail(res, 403, "只有总管理员可以处理提现申请");
+        return;
+      }
       ok(res, await store.patchWithdrawal(withdrawalId, await readBody(req), req.admin.appid));
       return;
     }
@@ -748,6 +955,9 @@ function createServer({ store }) {
     const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     try {
       if (requestUrl.pathname.startsWith("/api/admin/") && requestUrl.pathname !== "/api/admin/login" && !requireAdmin(req, res, true)) {
+        return;
+      }
+      if (requestUrl.pathname.startsWith("/api/merchant/") && requestUrl.pathname !== "/api/merchant/login" && !requireMerchant(req, res)) {
         return;
       }
       if (requestUrl.pathname.startsWith("/api/")) {

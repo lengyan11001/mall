@@ -11,6 +11,7 @@ const statusText = {
   approved: "已通过",
   rejected: "已拒绝",
   paidout: "已打款",
+  failed: "出款失败",
   on: "上架",
   off: "下架",
   draft: "未发布",
@@ -95,7 +96,15 @@ function isAddressFormField(field) {
 
 function activityFormSchema(value) {
   const schema = parseJson(value, []);
-  return Array.isArray(schema) ? schema.filter(field => !isAddressFormField(field)) : [];
+  return Array.isArray(schema)
+    ? schema
+        .filter(field => !isAddressFormField(field))
+        .map((field, index) => ({
+          ...field,
+          key: field.key || field.name || `field_${index + 1}`,
+          name: field.name || field.key || `field_${index + 1}`
+        }))
+    : [];
 }
 
 function publicProduct(product) {
@@ -133,6 +142,52 @@ function publicProduct(product) {
   };
 }
 
+function campaignDetailImageUrls(value) {
+  const rows = parseJson(value, []);
+  return Array.isArray(rows)
+    ? rows.map(item => typeof item === "string" ? item : item && item.image_url).filter(Boolean)
+    : [];
+}
+
+function publicCampaignProduct(row) {
+  const images = [
+    row.share_cover,
+    ...campaignDetailImageUrls(row.detail_images)
+  ].filter(Boolean);
+  return publicProduct({
+    id: 0,
+    appid: row.appid || "",
+    title: row.name,
+    subtitle: row.description || "",
+    product_no: row.product_no || `TK${row.id || ""}`,
+    barcode: row.product_barcode || "",
+    category: row.product_category || "拓客活动",
+    brand: row.product_brand || "",
+    unit: row.product_unit || "件",
+    market_price: row.product_market_price || row.lead_price,
+    price: row.lead_price,
+    cost_price: row.settle_price || row.lead_price,
+    stock: Math.max(0, Number(row.stock || 0) - Number(row.sold_count || 0)),
+    sales: Number(row.sold_count || 0) + Number(row.virtual_sold_count || 0),
+    status: row.status === "published" ? "on" : "off",
+    commission_rate: 0,
+    image_url: images[0] || "",
+    images_json: JSON.stringify(images),
+    detail_html: "",
+    description: row.description || "",
+    weight: 0,
+    min_buy_qty: 1,
+    per_order_limit: row.per_order_limit || 0,
+    per_user_limit: row.per_user_limit || 0,
+    is_virtual: 0,
+    no_refund_after_pay: 0,
+    freight_template: "",
+    delivery_methods: row.delivery_methods,
+    vip_enabled: 1,
+    created_at: row.created_at
+  });
+}
+
 function campaignRow(row) {
   const modeText = {
     current: "按会员当前推荐关系",
@@ -145,38 +200,8 @@ function campaignRow(row) {
     appid: row.appid || "",
     name: row.name,
     description: row.description || "",
-    product_id: row.product_id,
-    product: row.product_title ? publicProduct({
-      id: row.product_id,
-      title: row.product_title,
-      subtitle: row.product_subtitle,
-      product_no: row.product_no,
-      barcode: row.product_barcode,
-      category: row.product_category,
-      brand: row.product_brand,
-      unit: row.product_unit,
-      market_price: row.product_market_price,
-      price: row.product_price,
-      cost_price: row.product_cost_price,
-      stock: row.product_stock,
-      sales: row.product_sales,
-      status: row.product_status,
-      commission_rate: row.product_commission_rate,
-      image_url: row.product_image_url,
-      images_json: row.product_images_json,
-      detail_html: row.product_detail_html,
-      description: row.product_description,
-      weight: row.product_weight,
-      min_buy_qty: row.product_min_buy_qty,
-      per_order_limit: row.product_per_order_limit,
-      per_user_limit: row.product_per_user_limit,
-      is_virtual: row.product_is_virtual,
-      no_refund_after_pay: row.product_no_refund_after_pay,
-      freight_template: row.product_freight_template,
-      delivery_methods: row.product_delivery_methods,
-      vip_enabled: row.product_vip_enabled,
-      created_at: row.product_created_at
-    }) : null,
+    product_id: null,
+    product: publicCampaignProduct(row),
     start_at: row.start_at,
     end_at: row.end_at,
     hide_time: bool(row.hide_time),
@@ -189,6 +214,7 @@ function campaignRow(row) {
     delivery_methods: parseJson(row.delivery_methods, ["express"]),
     free_shipping: bool(row.free_shipping),
     show_store_address: bool(row.show_store_address),
+    pickup_address: row.pickup_address || "",
     verify_at_order_store: bool(row.verify_at_order_store),
     member_tag: row.member_tag || "",
     post_pay_address: bool(row.post_pay_address),
@@ -278,7 +304,7 @@ function orderRow(row) {
     id: row.id,
     appid: row.appid || "",
     user_id: row.user_id,
-    product_id: row.product_id,
+    product_id: row.campaign_name ? null : row.product_id,
     quantity: row.quantity,
     amount: money(row.amount),
     status: row.status,
@@ -288,12 +314,33 @@ function orderRow(row) {
     address: row.address,
     address_id: row.address_id || null,
     logistics_no: row.logistics_no || "",
+    logistics_company: row.logistics_company || "",
     expires_at: row.expires_at || null,
     created_at: row.created_at,
     paid_at: row.paid_at,
     received_at: row.received_at,
     status_text: statusText[row.status] || row.status,
-    product: row.product_title ? publicProduct({
+    product: row.campaign_name ? publicCampaignProduct({
+      id: row.campaign_id,
+      appid: row.appid,
+      name: row.campaign_name,
+      description: row.campaign_description,
+      product_id: 0,
+      product_no: row.campaign_no,
+      product_category: "拓客活动",
+      lead_price: row.campaign_lead_price || row.amount,
+      settle_price: row.campaign_settle_price || 0,
+      stock: row.campaign_stock || 0,
+      sold_count: row.campaign_sold_count || 0,
+      virtual_sold_count: row.campaign_virtual_sold_count || 0,
+      share_cover: row.campaign_share_cover || "",
+      detail_images: row.campaign_detail_images,
+      delivery_methods: row.campaign_delivery_methods,
+      per_order_limit: row.campaign_per_order_limit || 0,
+      per_user_limit: row.campaign_per_user_limit || 0,
+      status: row.campaign_status || "published",
+      created_at: row.campaign_created_at
+    }) : (row.product_title ? publicProduct({
       id: row.product_id,
       title: row.product_title,
       subtitle: row.product_subtitle,
@@ -323,7 +370,15 @@ function orderRow(row) {
       delivery_methods: row.product_delivery_methods,
       vip_enabled: row.product_vip_enabled,
       created_at: row.product_created_at
-    }) : null,
+    }) : null),
+    campaign: row.campaign_name ? {
+      id: row.campaign_id,
+      name: row.campaign_name,
+      description: row.campaign_description || "",
+      share_cover: assetUrl(row.campaign_share_cover || ""),
+      lead_price: money(row.campaign_lead_price || row.amount),
+      status: row.campaign_status || ""
+    } : null,
     user: row.user_nickname ? {
       id: row.user_id,
       openid: row.user_openid,
@@ -390,7 +445,26 @@ function commissionRow(row) {
       status: row.order_status,
       created_at: row.order_created_at
     } : null,
-    product: row.product_title ? publicProduct({
+    product: row.campaign_name ? publicCampaignProduct({
+      id: row.campaign_id,
+      appid: row.appid,
+      name: row.campaign_name,
+      description: row.campaign_description,
+      product_id: 0,
+      product_category: "拓客活动",
+      lead_price: row.campaign_lead_price || row.order_amount || 0,
+      settle_price: row.campaign_settle_price || 0,
+      stock: row.campaign_stock || 0,
+      sold_count: row.campaign_sold_count || 0,
+      virtual_sold_count: row.campaign_virtual_sold_count || 0,
+      share_cover: row.campaign_share_cover || "",
+      detail_images: row.campaign_detail_images,
+      delivery_methods: row.campaign_delivery_methods,
+      per_order_limit: row.campaign_per_order_limit || 0,
+      per_user_limit: row.campaign_per_user_limit || 0,
+      status: row.campaign_status || "published",
+      created_at: row.campaign_created_at
+    }) : (row.product_title ? publicProduct({
       id: row.product_id,
       title: row.product_title,
       subtitle: row.product_subtitle,
@@ -420,7 +494,7 @@ function commissionRow(row) {
       delivery_methods: row.product_delivery_methods,
       vip_enabled: row.product_vip_enabled,
       created_at: row.product_created_at
-    }) : null,
+    }) : null),
     buyer: row.buyer_nickname ? {
       id: row.buyer_id,
       nickname: row.buyer_nickname,

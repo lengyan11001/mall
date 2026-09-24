@@ -83,17 +83,49 @@ async function migrateTenancy(conn) {
   await addIndexIfMissing(conn, "products", "idx_products_app_status_category", "KEY idx_products_app_status_category (appid, status, category)");
 
   await addIndexIfMissing(conn, "acquisition_campaigns", "idx_acquisition_app_status_time", "KEY idx_acquisition_app_status_time (appid, status, start_at, end_at)");
+  await addColumnIfMissing(conn, "acquisition_campaigns", "owner_admin_id", "BIGINT UNSIGNED NULL AFTER appid");
+  await addIndexIfMissing(conn, "acquisition_campaigns", "idx_acquisition_owner_status_time", "KEY idx_acquisition_owner_status_time (appid, owner_admin_id, status, start_at, end_at)");
+  await addForeignKeyIfMissing(
+    conn,
+    "acquisition_campaigns",
+    "fk_acquisition_owner_admin",
+    "FOREIGN KEY (owner_admin_id) REFERENCES admin_users(id) ON DELETE SET NULL"
+  );
   await addIndexIfMissing(conn, "acquisition_campaigns", "idx_acquisition_app_product", "KEY idx_acquisition_app_product (appid, product_id)");
+  await dropForeignKeyIfExists(conn, "acquisition_campaigns", "fk_acquisition_product");
+  await makeColumnNullable(conn, "acquisition_campaigns", "product_id", "BIGINT UNSIGNED NULL");
+  await conn.query("UPDATE acquisition_campaigns SET product_id = NULL WHERE product_id IS NOT NULL");
+  await addForeignKeyIfMissing(
+    conn,
+    "acquisition_campaigns",
+    "fk_acquisition_product",
+    "FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL"
+  );
 
   await addIndexIfMissing(conn, "acquisition_materials", "idx_materials_app_type_sort", "KEY idx_materials_app_type_sort (appid, type, sort_order, id)");
 
   await addColumnIfMissing(conn, "app_settings", "screen_audio_url", "VARCHAR(600) NOT NULL DEFAULT ''");
+  await addColumnIfMissing(conn, "app_settings", "home_config", "JSON NULL");
   await addIndexIfMissing(conn, "app_settings", "uk_app_settings_appid", "UNIQUE KEY uk_app_settings_appid (appid)");
 
   await addIndexIfMissing(conn, "orders", "idx_orders_app_user_created", "KEY idx_orders_app_user_created (appid, user_id, created_at)");
   await addIndexIfMissing(conn, "orders", "idx_orders_app_status_created", "KEY idx_orders_app_status_created (appid, status, created_at)");
   await addIndexIfMissing(conn, "orders", "idx_orders_app_status_expires", "KEY idx_orders_app_status_expires (appid, status, expires_at, id)");
   await addIndexIfMissing(conn, "orders", "idx_orders_app_user_status_expires", "KEY idx_orders_app_user_status_expires (appid, user_id, status, expires_at)");
+  await dropForeignKeyIfExists(conn, "orders", "fk_orders_product");
+  await makeColumnNullable(conn, "orders", "product_id", "BIGINT UNSIGNED NULL");
+  await conn.query(`
+    UPDATE orders o
+    JOIN acquisition_orders ao ON ao.order_id = o.id AND ao.appid = o.appid
+    SET o.product_id = NULL
+    WHERE o.product_id IS NOT NULL
+  `);
+  await addForeignKeyIfMissing(
+    conn,
+    "orders",
+    "fk_orders_product",
+    "FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL"
+  );
 
   await addIndexIfMissing(conn, "acquisition_orders", "idx_acquisition_orders_campaign_app", "KEY idx_acquisition_orders_campaign_app (appid, campaign_id, created_at)");
   await addIndexIfMissing(conn, "acquisition_orders", "idx_acquisition_orders_campaign_order", "KEY idx_acquisition_orders_campaign_order (appid, campaign_id, order_id)");
@@ -115,6 +147,7 @@ async function migrateTenancy(conn) {
 
   await addIndexIfMissing(conn, "withdrawals", "idx_withdrawals_user_app", "KEY idx_withdrawals_user_app (appid, user_id, status)");
   await addIndexIfMissing(conn, "withdrawals", "idx_withdrawals_status_app", "KEY idx_withdrawals_status_app (appid, status, created_at)");
+  await widenWithdrawalStatusIfNeeded(conn);
 
   await dropIndexIfExists(conn, "screen_heartbeats", "uk_screen_heartbeat_session");
   await addIndexIfMissing(conn, "screen_heartbeats", "uk_screen_heartbeat_session", "UNIQUE KEY uk_screen_heartbeat_session (appid, session_key)");
@@ -129,18 +162,37 @@ async function migrateAdminUsers(conn) {
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       appid VARCHAR(32) NOT NULL DEFAULT '',
       username VARCHAR(64) NOT NULL,
+      phone VARCHAR(32) NOT NULL DEFAULT '',
+      display_name VARCHAR(80) NOT NULL DEFAULT '',
       password_hash VARCHAR(160) NOT NULL,
+      role ENUM('super','agent') NOT NULL DEFAULT 'super',
+      parent_admin_id BIGINT UNSIGNED NULL,
       status ENUM('active','disabled') NOT NULL DEFAULT 'active',
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uk_admin_users_username (username),
-      KEY idx_admin_users_appid (appid, status)
+      KEY idx_admin_users_appid (appid, status),
+      KEY idx_admin_users_phone (appid, phone),
+      KEY idx_admin_users_parent (parent_admin_id),
+      CONSTRAINT fk_admin_users_parent FOREIGN KEY (parent_admin_id) REFERENCES admin_users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   `);
   await addColumnIfMissing(conn, "admin_users", "appid", "VARCHAR(32) NOT NULL DEFAULT '' AFTER id");
+  await addColumnIfMissing(conn, "admin_users", "phone", "VARCHAR(32) NOT NULL DEFAULT '' AFTER username");
+  await addColumnIfMissing(conn, "admin_users", "display_name", "VARCHAR(80) NOT NULL DEFAULT '' AFTER phone");
+  await addColumnIfMissing(conn, "admin_users", "role", "ENUM('super','agent') NOT NULL DEFAULT 'super' AFTER password_hash");
+  await addColumnIfMissing(conn, "admin_users", "parent_admin_id", "BIGINT UNSIGNED NULL AFTER role");
   await addColumnIfMissing(conn, "admin_users", "status", "ENUM('active','disabled') NOT NULL DEFAULT 'active'");
   await addIndexIfMissing(conn, "admin_users", "uk_admin_users_username", "UNIQUE KEY uk_admin_users_username (username)");
   await addIndexIfMissing(conn, "admin_users", "idx_admin_users_appid", "KEY idx_admin_users_appid (appid, status)");
+  await addIndexIfMissing(conn, "admin_users", "idx_admin_users_phone", "KEY idx_admin_users_phone (appid, phone)");
+  await addIndexIfMissing(conn, "admin_users", "idx_admin_users_parent", "KEY idx_admin_users_parent (parent_admin_id)");
+  await addForeignKeyIfMissing(
+    conn,
+    "admin_users",
+    "fk_admin_users_parent",
+    "FOREIGN KEY (parent_admin_id) REFERENCES admin_users(id) ON DELETE SET NULL"
+  );
 }
 
 async function migrateProducts(conn) {
@@ -263,6 +315,8 @@ async function migratePayments(conn) {
   await addColumnIfMissing(conn, "orders", "transaction_id", "VARCHAR(64) NOT NULL DEFAULT '' AFTER out_trade_no");
   await addColumnIfMissing(conn, "orders", "prepay_id", "VARCHAR(128) NOT NULL DEFAULT '' AFTER transaction_id");
   await addColumnIfMissing(conn, "orders", "expires_at", "TIMESTAMP NULL DEFAULT NULL AFTER logistics_no");
+  await addColumnIfMissing(conn, "orders", "logistics_company", "VARCHAR(32) NOT NULL DEFAULT '' AFTER logistics_no");
+  await addColumnIfMissing(conn, "acquisition_campaigns", "pickup_address", "VARCHAR(255) NOT NULL DEFAULT '''' AFTER show_store_address");
   await conn.query("ALTER TABLE orders MODIFY out_trade_no VARCHAR(64) NULL");
   await conn.query("UPDATE orders SET out_trade_no = NULL WHERE out_trade_no = ''");
   await widenOrderStatusIfNeeded(conn);
@@ -286,6 +340,20 @@ async function widenOrderStatusIfNeeded(conn) {
   }
 }
 
+async function widenWithdrawalStatusIfNeeded(conn) {
+  const [rows] = await conn.query(
+    `SELECT COLUMN_TYPE column_type
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'withdrawals' AND COLUMN_NAME = 'status'`
+  );
+  const type = rows[0]?.column_type || "";
+  if (!type.includes("'failed'")) {
+    await conn.query(
+      "ALTER TABLE withdrawals MODIFY status ENUM('pending','approved','rejected','paidout','failed') NOT NULL DEFAULT 'pending'"
+    );
+  }
+}
+
 async function addColumnIfMissing(conn, tableName, columnName, definition) {
   const [rows] = await conn.query(
     `SELECT COUNT(*) AS count
@@ -295,6 +363,18 @@ async function addColumnIfMissing(conn, tableName, columnName, definition) {
   );
   if (!Number(rows[0].count)) {
     await conn.query(`ALTER TABLE \`${tableName}\` ADD COLUMN \`${columnName}\` ${definition}`);
+  }
+}
+
+async function makeColumnNullable(conn, tableName, columnName, definition) {
+  const [rows] = await conn.query(
+    `SELECT IS_NULLABLE is_nullable
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [tableName, columnName]
+  );
+  if (rows[0] && rows[0].is_nullable !== "YES") {
+    await conn.query(`ALTER TABLE \`${tableName}\` MODIFY \`${columnName}\` ${definition}`);
   }
 }
 
@@ -319,6 +399,21 @@ async function dropIndexIfExists(conn, tableName, indexName) {
   );
   if (Number(rows[0].count)) {
     await conn.query(`ALTER TABLE \`${tableName}\` DROP INDEX \`${indexName}\``);
+  }
+}
+
+async function dropForeignKeyIfExists(conn, tableName, constraintName) {
+  const [rows] = await conn.query(
+    `SELECT COUNT(*) AS count
+     FROM information_schema.TABLE_CONSTRAINTS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND CONSTRAINT_NAME = ?
+       AND CONSTRAINT_TYPE = 'FOREIGN KEY'`,
+    [tableName, constraintName]
+  );
+  if (Number(rows[0].count)) {
+    await conn.query(`ALTER TABLE \`${tableName}\` DROP FOREIGN KEY \`${constraintName}\``);
   }
 }
 
