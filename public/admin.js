@@ -11,6 +11,18 @@ const adminState = {
   campaignRewards: [],
   campaignDashboard: null,
   materials: [],
+  agents: [],
+  users: {
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 30,
+    page_count: 0
+  },
+  userFilters: {
+    keyword: "",
+    distributorStatus: ""
+  },
   distributors: [],
   commissions: [],
   withdrawals: [],
@@ -19,12 +31,29 @@ const adminState = {
   posterLayout: null,
   posterLayoutSelected: "qr",
   posterLayoutDrag: null,
+  admin: null,
   token: localStorage.getItem("mallAdminToken") || "",
   appid: localStorage.getItem("mallAdminAppid") || ""
 };
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
+
+function decodeAdminToken(token = "") {
+  try {
+    const data = String(token || "").split(".")[0];
+    if (!data) return null;
+    const padded = data.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(data.length / 4) * 4, "=");
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+    const payload = JSON.parse(new TextDecoder().decode(bytes));
+    return Number(payload.exp || 0) > Date.now() ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+adminState.admin = decodeAdminToken(adminState.token);
 
 const campaignSteps = ["base", "reward", "lottery", "traffic", "other", "done"];
 const productSections = ["base", "media", "detail"];
@@ -87,7 +116,7 @@ function countdownLabel(value) {
 }
 
 function avatarNode(user = {}) {
-  if (user.avatar && /^https?:\/\//.test(user.avatar)) {
+  if (user.avatar && (/^https?:\/\//.test(user.avatar) || user.avatar.startsWith("/"))) {
     return `<img src="${escapeHtml(user.avatar)}" alt="${escapeHtml(user.nickname || "用户")}" />`;
   }
   const text = Array.from(user.nickname || user.avatar || "快").slice(0, 1).join("") || "快";
@@ -95,7 +124,7 @@ function avatarNode(user = {}) {
 }
 
 function pillClass(status) {
-  if (["rejected", "refunded", "canceled", "off", "ended", "expired", "disabled"].includes(status)) return "danger";
+  if (["rejected", "failed", "refunded", "canceled", "off", "ended", "expired", "disabled"].includes(status)) return "danger";
   if (["pending", "paid", "shipped", "approved", "draft"].includes(status)) return "warn";
   if (["published", "enabled"].includes(status)) return "blue";
   return "";
@@ -130,6 +159,18 @@ function setAdminAppid(appid) {
     localStorage.removeItem("mallAdminAppid");
   }
   updateTenantLinks();
+}
+
+function isSuperAdmin() {
+  const admin = adminState.admin || {};
+  return admin.role !== "agent" || !Number(admin.id || 0);
+}
+
+function updateAdminRoleVisibility() {
+  const visible = isSuperAdmin();
+  $$('[data-admin-tab="withdrawals"]').forEach(button => {
+    button.style.display = visible ? "" : "none";
+  });
 }
 
 async function api(path, options = {}) {
@@ -324,6 +365,98 @@ function uploadControl(field, value = "", placeholder = "上传图片后自动�
     </div>`;
 }
 
+function defaultHomeConfig() {
+  return {
+    hero: {
+      kicker: "潮玩周边商城",
+      title: "门店想要裂变效果好",
+      highlight: "就用 非常好裂变",
+      subtitle: "精选手办、盲盒、二次元周边，现货好物每日更新。",
+      image_url: "",
+      action_text: "逛商品",
+      action_path: "/pages/home/index"
+    },
+    entries: [
+      { title: "拓客宝", image_url: "", path: "/pages/store/index" },
+      { title: "行业方案", image_url: "", path: "/pages/store/index" },
+      { title: "经典案例", image_url: "", path: "/pages/store/index" },
+      { title: "私域课堂", image_url: "", path: "/pages/store/index" },
+      { title: "私域导师", image_url: "", path: "/pages/store/index" },
+      { title: "引流产品", image_url: "", path: "/pages/store/index" }
+    ],
+    product_section: {
+      kicker: "商品中心",
+      title: "精选商品",
+      subtitle: "普通商品在这里展示，拓客活动进入商家中心查看。"
+    }
+  };
+}
+
+function normalizedHomeConfig(config = {}) {
+  const defaults = defaultHomeConfig();
+  const hero = config.hero || {};
+  const productSection = config.product_section || {};
+  const entries = Array.isArray(config.entries) && config.entries.length ? config.entries : defaults.entries;
+  return {
+    hero: {
+      ...defaults.hero,
+      ...hero
+    },
+    entries,
+    product_section: {
+      ...defaults.product_section,
+      ...productSection
+    }
+  };
+}
+
+function renderHomeEntryRows(entries = []) {
+  const rows = Array.isArray(entries) ? entries : [];
+  $("#setting-home-entry-rows").innerHTML = rows.map(item => `
+    <tr data-home-entry-row>
+      <td>${uploadControl("image_url", item.image_url || "", "上传入口图标")}</td>
+      <td><input class="input" data-field="title" value="${escapeAttr(item.title || "")}" placeholder="入口标题" /></td>
+      <td><input class="input" data-field="path" value="${escapeAttr(item.path || "/pages/home/index")}" placeholder="/pages/product/detail?id=1" /></td>
+      <td><button class="btn secondary compact" type="button" data-remove-home-entry>删除</button></td>
+    </tr>
+  `).join("");
+}
+
+function readHomeEntryRows() {
+  return $$("#setting-home-entry-rows tr").map(row => ({
+    title: row.querySelector('[data-field="title"]').value.trim(),
+    image_url: row.querySelector('[data-field="image_url"]').value.trim(),
+    path: row.querySelector('[data-field="path"]').value.trim() || "/pages/home/index"
+  })).filter(item => item.title);
+}
+
+function addHomeEntryRow() {
+  renderHomeEntryRows([
+    ...readHomeEntryRows(),
+    { title: "", image_url: "", path: "/pages/home/index" }
+  ]);
+}
+
+function homeConfigFormPayload() {
+  return {
+    hero: {
+      kicker: $("#setting-home-hero-kicker").value.trim(),
+      title: $("#setting-home-hero-title").value.trim(),
+      highlight: $("#setting-home-hero-highlight").value.trim(),
+      subtitle: $("#setting-home-hero-subtitle").value.trim(),
+      image_url: $("#setting-home-hero-image").value.trim(),
+      action_text: $("#setting-home-hero-action-text").value.trim(),
+      action_path: "/pages/home/index"
+    },
+    entries: readHomeEntryRows(),
+    product_section: {
+      kicker: $("#setting-home-product-kicker").value.trim(),
+      title: $("#setting-home-product-title").value.trim(),
+      subtitle: $("#setting-home-product-subtitle").value.trim()
+    }
+  };
+}
+
 function chooseAndUploadFile(button) {
   const targetSelector = button.dataset.uploadTarget;
   const previewSelector = button.dataset.previewTarget;
@@ -464,7 +597,9 @@ async function adminLogin() {
     })
   });
   adminState.token = data.token;
+  adminState.admin = data;
   setAdminAppid(data.appid);
+  updateAdminRoleVisibility();
   localStorage.setItem("mallAdminToken", data.token);
   hideAdminLogin();
   toast("登录成功");
@@ -473,20 +608,28 @@ async function adminLogin() {
 
 function adminLogout() {
   adminState.token = "";
+  adminState.admin = null;
   setAdminAppid("");
+  updateAdminRoleVisibility();
   localStorage.removeItem("mallAdminToken");
   showAdminLogin();
 }
 
 function setAdminTab(tab) {
+  if (tab === "withdrawals" && !isSuperAdmin()) {
+    toast("只有总管理员可以查看提现申请");
+    tab = "dashboard";
+  }
   adminState.tab = tab;
   const meta = {
     dashboard: ["数据看板", "销售额、订单量、用户增长和分销表现"],
     products: ["商品管理", "完整商品资料、价格、库存、配送、售后和图文详情"],
-    acquisition: ["拓客宝", "引流商品、关系锁定、推荐奖励、引流码、表单和战报"],
+    acquisition: ["拓客宝", "活动商品、关系锁定、推荐奖励、引流码、表单和战报"],
+    agents: ["代理商管理", "添加代理商账号，设置手机号、密码和启用状态"],
     orders: ["订单管理", "筛选、发货、物流单号和退款处理"],
+    users: ["用户列表", "查看当前小程序的注册用户、关系链和佣金账户"],
     distributors: ["分销管理", "分销员审核、关系链和佣金流水"],
-    withdrawals: ["提现审核", "提现申请审核、拒绝和模拟打款"],
+    withdrawals: ["提现审核", "提现申请审核、拒绝和管理员打款"],
     settings: ["系统设置", "佣金比例、最低提现和合规称呼"]
   };
   $("#admin-title").textContent = meta[tab][0];
@@ -495,6 +638,7 @@ function setAdminTab(tab) {
   $$(".admin-view").forEach(view => view.classList.toggle("active", view.id === `admin-${tab}`));
   if (tab === "products") showProductOverview();
   if (tab === "acquisition") showCampaignOverview();
+  if (tab === "agents") resetAgentForm();
   loadCurrent();
 }
 
@@ -502,7 +646,9 @@ async function loadCurrent() {
   if (adminState.tab === "dashboard") await loadDashboard();
   if (adminState.tab === "products") await loadProducts();
   if (adminState.tab === "acquisition") await loadAcquisition();
+  if (adminState.tab === "agents") await loadAgents();
   if (adminState.tab === "orders") await loadOrders();
+  if (adminState.tab === "users") await loadUsers();
   if (adminState.tab === "distributors") await loadDistributors();
   if (adminState.tab === "withdrawals") await loadWithdrawals();
   if (adminState.tab === "settings") await loadSettings();
@@ -519,15 +665,18 @@ async function loadProducts() {
   renderProducts();
 }
 
+async function loadAgents() {
+  adminState.agents = await api("/api/admin/agents");
+  renderAgents();
+}
+
 async function loadAcquisition() {
-  const [campaigns, materials, products] = await Promise.all([
+  const [campaigns, materials] = await Promise.all([
     api("/api/admin/acquisition/campaigns"),
-    api("/api/admin/acquisition/materials"),
-    adminState.products.length ? Promise.resolve(adminState.products) : api("/api/admin/products")
+    api("/api/admin/acquisition/materials")
   ]);
   adminState.campaigns = campaigns;
   adminState.materials = materials;
-  adminState.products = products;
   if (campaigns.length) {
     const selectedId = adminState.selectedCampaign?.id;
     adminState.selectedCampaign = campaigns.find(campaign => campaign.id === selectedId) || campaigns[0];
@@ -547,6 +696,19 @@ async function loadAcquisition() {
 async function loadOrders() {
   adminState.orders = await api("/api/admin/orders");
   renderOrders();
+}
+
+async function loadUsers(page = adminState.users.page || 1) {
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(adminState.users.page_size || 30)
+  });
+  if (adminState.userFilters.keyword) params.set("keyword", adminState.userFilters.keyword);
+  if (adminState.userFilters.distributorStatus) {
+    params.set("distributor_status", adminState.userFilters.distributorStatus);
+  }
+  adminState.users = await api(`/api/admin/users?${params.toString()}`);
+  renderUsers();
 }
 
 async function loadDistributors() {
@@ -633,14 +795,35 @@ function renderProducts() {
   `).join("");
 }
 
+function renderAgents() {
+  const table = $("#agent-table");
+  if (!table) return;
+  table.innerHTML = adminState.agents.length ? adminState.agents.map(agent => `
+    <tr>
+      <td><strong>${escapeHtml(agent.display_name || agent.username)}</strong><br><small>${escapeHtml(agent.username)}</small></td>
+      <td>${escapeHtml(agent.phone || "-")}</td>
+      <td>${agent.campaign_count || 0}</td>
+      <td><span class="pill ${pillClass(agent.status)}">${agent.status === "active" ? "启用" : "禁用"}</span></td>
+      <td>
+        <div class="row-actions">
+          <button class="btn ghost" data-edit-agent="${agent.id}">${icon("edit")} 编辑</button>
+          <button class="btn danger" data-delete-agent="${agent.id}">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join("") : '<tr><td colspan="5"><div class="empty">暂无代理商账号</div></td></tr>';
+}
+
 function renderCampaigns() {
-  $("#campaign-product").innerHTML = adminState.products.map(product => `
-    <option value="${product.id}">${product.title} / ${product.product_no || product.id}</option>
-  `).join("");
   $("#campaign-table").innerHTML = adminState.campaigns.length ? adminState.campaigns.map(campaign => `
     <tr class="${adminState.selectedCampaign?.id === campaign.id ? "selected" : ""}">
       <td><strong>${campaign.name}</strong><br><small>${dateLabel(campaign.start_at)} - ${dateLabel(campaign.end_at)}</small></td>
-      <td>${campaign.product?.title || "-"}<br><small>${campaign.product?.product_no || ""}</small></td>
+      <td>
+        <div style="display:flex; align-items:center; gap:10px; min-width:220px;">
+          <img class="thumb" src="${escapeAttr(campaign.share_cover || campaign.product?.images?.[0] || "")}" alt="${escapeAttr(campaign.name)}" />
+          <div>${escapeHtml(campaign.description || "独立活动商品")}<br><small>活动编号 TK${campaign.id}</small></div>
+        </div>
+      </td>
       <td>${formatMoney(campaign.lead_price)}<br><small>库存 ${campaign.stock}</small></td>
       <td>${campaign.relation_mode_text}</td>
       <td>会员 ${campaign.relation_count}<br><small>订单 ${campaign.order_count}</small></td>
@@ -736,7 +919,7 @@ function renderOrders() {
       <td>${order.user?.nickname || "-"}<br><small>${order.address || ""}</small></td>
       <td>${order.product?.title || "-"}<br><small>${order.quantity} 件</small></td>
       <td>${formatMoney(order.amount)}</td>
-      <td>${order.logistics_no || "待发货"}</td>
+      <td>${order.logistics_no ? `${escapeHtml(order.logistics_company || "")} ${escapeHtml(order.logistics_no)}`.trim() : "待发货"}</td>
       <td><span class="pill ${pillClass(order.status)}">${order.status_text}</span></td>
       <td>
         <div class="row-actions">
@@ -747,6 +930,42 @@ function renderOrders() {
       </td>
     </tr>
   `).join("");
+}
+
+function renderUsers() {
+  const data = adminState.users || {};
+  const statusText = { approved: "已通过", pending: "待审核", rejected: "已拒绝" };
+  const items = Array.isArray(data.items) ? data.items : [];
+  $("#user-total").textContent = `${Number(data.total || 0)} 人`;
+  $("#user-table").innerHTML = items.length ? items.map(user => `
+    <tr>
+      <td>
+        <div class="user-list-cell">
+          <div class="avatar user-list-avatar">${avatarNode(user)}</div>
+          <div>
+            <strong>${escapeHtml(user.nickname || "未设置昵称")}</strong><br>
+            <small>ID ${user.id} · ${escapeHtml(user.phone || "未绑定手机号")}</small>
+          </div>
+        </div>
+      </td>
+      <td>${escapeHtml(user.parent?.nickname || "-")}<br><small>${user.parent ? `ID ${user.parent.id}` : ""}</small></td>
+      <td>${Number(user.direct_count || 0)}</td>
+      <td>${formatMoney(user.total_commission)}</td>
+      <td>${formatMoney(user.available_balance)}</td>
+      <td><span class="pill ${pillClass(user.distributor_status)}">${statusText[user.distributor_status] || "未设置"}</span></td>
+      <td>${dateLabel(user.created_at)}</td>
+    </tr>
+  `).join("") : '<tr><td colspan="7"><div class="empty">暂无符合条件的小程序用户</div></td></tr>';
+
+  const page = Number(data.page || 1);
+  const pageCount = Number(data.page_count || 0);
+  $("#user-pagination").innerHTML = pageCount > 1 ? `
+    <span>第 ${page} / ${pageCount} 页</span>
+    <div class="row-actions">
+      <button class="btn ghost compact" type="button" data-users-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button>
+      <button class="btn ghost compact" type="button" data-users-page="${page + 1}" ${page >= pageCount ? "disabled" : ""}>下一页</button>
+    </div>
+  ` : "";
 }
 
 function renderDistributors() {
@@ -795,6 +1014,7 @@ function renderWithdrawals() {
           <button class="btn ghost" data-withdrawal="${item.id}" data-action="approve" ${item.status === "pending" ? "" : "disabled"}>通过</button>
           <button class="btn" data-withdrawal="${item.id}" data-action="pay" ${["pending", "approved"].includes(item.status) ? "" : "disabled"}>打款</button>
           <button class="btn danger" data-withdrawal="${item.id}" data-action="reject" ${item.status === "pending" ? "" : "disabled"}>拒绝</button>
+          <button class="btn danger" data-withdrawal="${item.id}" data-action="fail" ${["pending", "approved"].includes(item.status) ? "" : "disabled"}>失败</button>
         </div>
       </td>
     </tr>
@@ -803,12 +1023,24 @@ function renderWithdrawals() {
 
 function renderSettings() {
   const settings = adminState.settings;
+  const homeConfig = normalizedHomeConfig(settings.home_config);
   $("#setting-level1").value = settings.commission_level_1;
   $("#setting-level2").value = settings.commission_level_2;
   $("#setting-min-withdrawal").value = settings.min_withdrawal;
   $("#setting-compliance-name").value = settings.compliance_name;
   $("#setting-auto-pay").checked = Boolean(settings.auto_pay_enabled);
   $("#setting-screen-audio").value = settings.screen_audio_url || "";
+  $("#setting-home-hero-kicker").value = homeConfig.hero.kicker || "";
+  $("#setting-home-hero-title").value = homeConfig.hero.title || "";
+  $("#setting-home-hero-highlight").value = homeConfig.hero.highlight || "";
+  $("#setting-home-hero-subtitle").value = homeConfig.hero.subtitle || "";
+  $("#setting-home-hero-image").value = homeConfig.hero.image_url || "";
+  $("#setting-home-hero-action-text").value = homeConfig.hero.action_text || "";
+  $("#setting-home-product-kicker").value = homeConfig.product_section.kicker || "";
+  $("#setting-home-product-title").value = homeConfig.product_section.title || "";
+  $("#setting-home-product-subtitle").value = homeConfig.product_section.subtitle || "";
+  renderImageUrlPreview("#setting-home-hero-image", "#setting-home-hero-image-preview");
+  renderHomeEntryRows(homeConfig.entries);
 }
 
 function setProductSection(section) {
@@ -1496,7 +1728,6 @@ function renderCampaignReview() {
     $("#campaign-review").innerHTML = `<div class="empty" style="grid-column:1/-1;">${error.message}</div>`;
     return;
   }
-  const product = adminState.products.find(item => item.id === payload.product_id);
   const relationText = {
     current: "按会员当前推荐关系",
     first: "按会员首次推荐关系",
@@ -1505,7 +1736,7 @@ function renderCampaignReview() {
   }[payload.relation_mode] || payload.relation_mode;
   const rows = [
     ["活动主题", payload.name || "-"],
-    ["引流商品", product?.title || `ID ${payload.product_id || "-"}`],
+    ["活动商品", payload.description || "使用拓客活动自己的商品信息"],
     ["活动状态", payload.status],
     ["时间范围", `${dateLabel(payload.start_at)} - ${dateLabel(payload.end_at)}`],
     ["库存/引流价", `${payload.stock} / ${formatMoney(payload.lead_price)}`],
@@ -1556,7 +1787,6 @@ function openCampaignEditor(campaign = null) {
   $("#campaign-id").value = campaign?.id || "";
   $("#campaign-name").value = campaign?.name || "";
   $("#campaign-description").value = campaign?.description || "";
-  $("#campaign-product").value = campaign?.product_id || adminState.products[0]?.id || "";
   $("#campaign-status").value = campaign?.status || "draft";
   $("#campaign-start").value = toDateTimeLocal(campaign?.start_at || new Date());
   $("#campaign-end").value = toDateTimeLocal(campaign?.end_at || new Date(Date.now() + 7 * 86400000));
@@ -1610,9 +1840,11 @@ function openCampaignEditor(campaign = null) {
   renderCampaignRows("ranking", campaign?.virtual_rankings || []);
   $("#campaign-background-music").value = campaign?.background_music || "";
   $("#campaign-service-qrcode").value = campaign?.customer_service_qrcode || "";
+  $("#campaign-delivery-mode").value = Array.isArray(campaign?.delivery_methods) && campaign.delivery_methods.indexOf("pickup") >= 0 ? "pickup" : "express";
+  $("#campaign-pickup-address").value = campaign?.pickup_address || "";
   renderImageUrlPreview("#campaign-service-qrcode", "#campaign-service-qrcode-preview");
   renderCampaignRows("form-field", campaign?.form_schema || []);
-  $("#campaign-share-cover").value = campaign?.share_cover || campaign?.product?.images?.[0] || "";
+  $("#campaign-share-cover").value = campaign?.share_cover || "";
   renderImageUrlPreview("#campaign-share-cover", "#campaign-share-cover-preview");
   renderCampaignRows("detail-image", campaign?.detail_images || []);
   $("#campaign-share-description").value = campaign?.share_description || "";
@@ -1625,7 +1857,7 @@ function campaignFormPayload() {
   return {
     name: $("#campaign-name").value.trim(),
     description: $("#campaign-description").value.trim(),
-    product_id: Number($("#campaign-product").value),
+    product_id: null,
     status: $("#campaign-status").value,
     start_at: fromDateTimeLocal($("#campaign-start").value),
     end_at: fromDateTimeLocal($("#campaign-end").value),
@@ -1670,7 +1902,8 @@ function campaignFormPayload() {
     virtual_rankings: readCampaignRows("ranking"),
     background_music: $("#campaign-background-music").value.trim(),
     customer_service_qrcode: $("#campaign-service-qrcode").value.trim(),
-    delivery_methods: ["express"],
+    delivery_methods: [$("#campaign-delivery-mode").value === "pickup" ? "pickup" : "express"],
+    pickup_address: $("#campaign-pickup-address").value.trim(),
     form_schema: readCampaignRows("form-field"),
     share_cover: $("#campaign-share-cover").value.trim(),
     detail_images: readCampaignRows("detail-image"),
@@ -1694,6 +1927,55 @@ async function saveProduct() {
   toast("商品已保存");
   await loadProducts();
   showProductOverview();
+}
+
+function resetAgentForm() {
+  if (!$("#agent-id")) return;
+  $("#agent-form-title").textContent = "新增代理商";
+  $("#agent-id").value = "";
+  $("#agent-display-name").value = "";
+  $("#agent-phone").value = "";
+  $("#agent-username").value = "";
+  $("#agent-password").value = "";
+  $("#agent-status").value = "active";
+}
+
+function editAgent(agent) {
+  if (!agent) return;
+  $("#agent-form-title").textContent = "编辑代理商";
+  $("#agent-id").value = agent.id || "";
+  $("#agent-display-name").value = agent.display_name || "";
+  $("#agent-phone").value = agent.phone || "";
+  $("#agent-username").value = agent.username || "";
+  $("#agent-password").value = "";
+  $("#agent-status").value = agent.status || "active";
+}
+
+async function saveAgent() {
+  const id = Number($("#agent-id").value || 0);
+  const payload = {
+    display_name: $("#agent-display-name").value.trim(),
+    phone: $("#agent-phone").value.trim(),
+    username: $("#agent-username").value.trim() || $("#agent-phone").value.trim(),
+    password: $("#agent-password").value,
+    status: $("#agent-status").value
+  };
+  await api(id ? `/api/admin/agents/${id}` : "/api/admin/agents", {
+    method: id ? "PUT" : "POST",
+    body: JSON.stringify(payload)
+  });
+  toast("代理商已保存");
+  resetAgentForm();
+  await loadAgents();
+}
+
+async function deleteAgent(id) {
+  const agent = adminState.agents.find(item => item.id === id);
+  if (!agent) return;
+  if (!confirm(`确定删除代理商「${agent.display_name || agent.username}」？关联活动会保留给总后台。`)) return;
+  adminState.agents = await api(`/api/admin/agents/${id}`, { method: "DELETE" });
+  renderAgents();
+  toast("代理商已删除");
 }
 
 async function saveCampaign() {
@@ -1810,12 +2092,17 @@ async function patchOrder(id, action) {
   if (action === "ship") {
     body.logistics_no = prompt("请输入物流单号", `SF${Date.now()}`) || "";
     if (!body.logistics_no) return;
+    body.logistics_company = (prompt("请输入快递公司编码（SF 顺丰 / YTO 圆通 / ZTO 中通 / YD 韵达 / JD 京东 / EMS）", "SF") || "SF").trim().toUpperCase();
   }
-  await api(`/api/admin/orders/${id}`, {
+  const order = await api(`/api/admin/orders/${id}`, {
     method: "PATCH",
     body: JSON.stringify(body)
   });
-  toast("订单已更新");
+  if (order && order.shipping_warning) {
+    toast(`已发货，但微信订单中心同步失败：${order.shipping_warning}`);
+  } else {
+    toast("订单已更新");
+  }
   await loadOrders();
 }
 
@@ -1829,7 +2116,13 @@ async function patchDistributor(id, status) {
 }
 
 async function patchWithdrawal(id, action) {
-  const review_note = action === "reject" ? "审核未通过" : action === "pay" ? "已模拟企业付款到零钱" : "审核通过";
+  const review_note = action === "reject"
+    ? "审核未通过"
+    : action === "pay"
+      ? "已确认打款，微信自动出款待接入"
+      : action === "fail"
+        ? "出款失败，金额已退回可提现"
+        : "审核通过，等待管理员打款";
   await api(`/api/admin/withdrawals/${id}`, {
     method: "PATCH",
     body: JSON.stringify({ action, review_note })
@@ -1847,7 +2140,8 @@ async function saveSettings() {
       min_withdrawal: Number($("#setting-min-withdrawal").value),
       compliance_name: $("#setting-compliance-name").value,
       auto_pay_enabled: $("#setting-auto-pay").checked,
-      screen_audio_url: $("#setting-screen-audio").value.trim()
+      screen_audio_url: $("#setting-screen-audio").value.trim(),
+      home_config: homeConfigFormPayload()
     })
   });
   toast("设置已保存");
@@ -1864,6 +2158,22 @@ function bindEvents() {
   $("#new-campaign").addEventListener("click", () => openCampaignEditor());
   $("#refresh-campaigns").addEventListener("click", () => loadAcquisition().then(() => toast("拓客宝已刷新")));
   $("#new-material").addEventListener("click", () => addMaterial().catch(error => toast(error.message)));
+  $("#user-search").addEventListener("click", () => {
+    adminState.userFilters.keyword = $("#user-keyword").value.trim();
+    adminState.userFilters.distributorStatus = $("#user-distributor-status").value;
+    loadUsers(1).catch(error => toast(error.message));
+  });
+  $("#user-reset").addEventListener("click", () => {
+    adminState.userFilters = { keyword: "", distributorStatus: "" };
+    $("#user-keyword").value = "";
+    $("#user-distributor-status").value = "";
+    loadUsers(1).catch(error => toast(error.message));
+  });
+  $("#user-keyword").addEventListener("keydown", event => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    $("#user-search").click();
+  });
   $("#back-product-list").addEventListener("click", showProductOverview);
   $$("[data-product-section]").forEach(button => {
     button.addEventListener("click", () => setProductSection(button.dataset.productSection));
@@ -1935,6 +2245,8 @@ function bindEvents() {
     if (!$("#poster-layout-modal").classList.contains("hidden")) renderPosterLayoutStage();
   });
   $("#save-settings").addEventListener("click", () => saveSettings().catch(error => toast(error.message)));
+  $("#save-agent").addEventListener("click", () => saveAgent().catch(error => toast(error.message)));
+  $("#reset-agent").addEventListener("click", resetAgentForm);
   $("#admin-login-form").addEventListener("submit", event => {
     event.preventDefault();
     adminLogin().catch(error => toast(error.message));
@@ -1954,6 +2266,15 @@ function bindEvents() {
     const deleteProductButton = event.target.closest("[data-delete-product]");
     if (deleteProductButton) {
       deleteProduct(Number(deleteProductButton.dataset.deleteProduct)).catch(error => toast(error.message));
+    }
+    const editAgentButton = event.target.closest("[data-edit-agent]");
+    if (editAgentButton) {
+      const agent = adminState.agents.find(item => item.id === Number(editAgentButton.dataset.editAgent));
+      editAgent(agent);
+    }
+    const deleteAgentButton = event.target.closest("[data-delete-agent]");
+    if (deleteAgentButton) {
+      deleteAgent(Number(deleteAgentButton.dataset.deleteAgent)).catch(error => toast(error.message));
     }
     const selectCampaignButton = event.target.closest("[data-select-campaign]");
     if (selectCampaignButton) {
@@ -1981,6 +2302,16 @@ function bindEvents() {
     const removeCampaignRow = event.target.closest("[data-remove-campaign-row]");
     if (removeCampaignRow) {
       removeCampaignRow.closest("tr")?.remove();
+      return;
+    }
+    const addHomeEntry = event.target.closest("[data-add-home-entry]");
+    if (addHomeEntry) {
+      addHomeEntryRow();
+      return;
+    }
+    const removeHomeEntry = event.target.closest("[data-remove-home-entry]");
+    if (removeHomeEntry) {
+      removeHomeEntry.closest("tr")?.remove();
       return;
     }
     const removeProductImage = event.target.closest("[data-remove-product-image]");
@@ -2028,6 +2359,10 @@ function bindEvents() {
     if (withdrawal) {
       patchWithdrawal(Number(withdrawal.dataset.withdrawal), withdrawal.dataset.action).catch(error => toast(error.message));
     }
+    const usersPage = event.target.closest("[data-users-page]");
+    if (usersPage && !usersPage.disabled) {
+      loadUsers(Number(usersPage.dataset.usersPage)).catch(error => toast(error.message));
+    }
   });
   document.addEventListener("input", event => {
     const uploadInput = event.target.closest(".table-upload-cell input");
@@ -2041,6 +2376,7 @@ async function init() {
   hydrateIcons();
   bindEvents();
   updateTenantLinks();
+  updateAdminRoleVisibility();
   if (!adminState.token) {
     showAdminLogin();
     return;

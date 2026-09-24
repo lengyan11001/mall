@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>必火次元管理后台</title>
-    <link rel="stylesheet" href="/styles.css?v=20260725-upload-clear" />
+    <link rel="stylesheet" href="/styles.css?v=20260728-home-config" />
   </head>
   <body>
     <div class="admin-login-layer open" id="admin-login-layer">
@@ -38,7 +38,9 @@
           <button class="active" data-admin-tab="dashboard"><span class="slot-icon" data-icon="chart"></span> 数据看板</button>
           <button data-admin-tab="products"><span class="slot-icon" data-icon="shop"></span> 商品管理</button>
           <button data-admin-tab="acquisition"><span class="slot-icon" data-icon="share"></span> 拓客宝</button>
+          <button data-admin-tab="agents"><span class="slot-icon" data-icon="users"></span> 代理商管理</button>
           <button data-admin-tab="orders"><span class="slot-icon" data-icon="order"></span> 订单管理</button>
+          <button data-admin-tab="users"><span class="slot-icon" data-icon="user"></span> 用户列表</button>
           <button data-admin-tab="distributors"><span class="slot-icon" data-icon="users"></span> 分销管理</button>
           <button data-admin-tab="withdrawals"><span class="slot-icon" data-icon="wallet"></span> 提现审核</button>
           <button data-admin-tab="settings"><span class="slot-icon" data-icon="settings"></span> 系统设置</button>
@@ -262,7 +264,7 @@
                 <div class="table-wrap">
                   <table>
                     <thead>
-                      <tr><th>活动</th><th>引流商品</th><th>引流价</th><th>关系模式</th><th>参与</th><th>状态</th><th>操作</th></tr>
+                      <tr><th>活动</th><th>活动信息</th><th>引流价</th><th>关系模式</th><th>参与</th><th>状态</th><th>操作</th></tr>
                     </thead>
                     <tbody id="campaign-table"></tbody>
                   </table>
@@ -319,7 +321,7 @@
             <section class="campaign-step-panel active" data-campaign-panel="base">
               <div class="campaign-panel-head">
                 <h3>基本设置</h3>
-                <p>活动名称、商品、时间、库存和限购。</p>
+                <p>活动名称、时间、库存、价格和限购。</p>
               </div>
               <div class="form-grid">
                 <label class="field wide">
@@ -329,10 +331,6 @@
                 <label class="field wide">
                   <span>活动描述</span>
                   <input class="input" id="campaign-description" />
-                </label>
-                <label class="field">
-                  <span>引流商品</span>
-                  <select class="select" id="campaign-product"></select>
                 </label>
                 <label class="field">
                   <span>活动状态</span>
@@ -568,6 +566,17 @@
                     <button class="btn ghost compact" type="button" data-upload-target="#campaign-background-music" data-upload-kind="audio" data-upload-label="上传音频">上传音频</button>
                   </div>
                 </div>
+                <div class="field">
+                  <span>配送方式</span>
+                  <select class="select" id="campaign-delivery-mode">
+                    <option value="express">快递发货</option>
+                    <option value="pickup">到店自提</option>
+                  </select>
+                </div>
+                <div class="field wide">
+                  <span>自提地址（选择到店自提时展示给用户，下单不需要填收货地址）</span>
+                  <input class="input" id="campaign-pickup-address" placeholder="门店或自提点地址" />
+                </div>
                 <div class="field wide">
                   <span>客服二维码</span>
                   <div class="image-upload-row">
@@ -686,6 +695,47 @@
 
         </section>
 
+        <section id="admin-users" class="admin-view">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h2>小程序用户</h2>
+                <p class="section-note">当前登录后台只显示所属小程序的数据。</p>
+              </div>
+              <span class="pill blue" id="user-total">0 人</span>
+            </div>
+            <div class="toolbar user-list-toolbar">
+              <label class="field compact-field">
+                <span>搜索用户</span>
+                <div class="input-with-icon">
+                  <span class="slot-icon" data-icon="search"></span>
+                  <input class="input" id="user-keyword" placeholder="昵称、手机号或用户 ID" />
+                </div>
+              </label>
+              <label class="field compact-field">
+                <span>分销状态</span>
+                <select class="select" id="user-distributor-status">
+                  <option value="">全部用户</option>
+                  <option value="approved">已通过</option>
+                  <option value="pending">待审核</option>
+                  <option value="rejected">已拒绝</option>
+                </select>
+              </label>
+              <button class="btn secondary compact" type="button" id="user-search">查询</button>
+              <button class="btn ghost compact" type="button" id="user-reset">重置</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>用户</th><th>上级</th><th>直推客户</th><th>累计佣金</th><th>可提现</th><th>分销状态</th><th>注册时间</th></tr>
+                </thead>
+                <tbody id="user-table"></tbody>
+              </table>
+            </div>
+            <div class="table-pagination" id="user-pagination"></div>
+          </div>
+        </section>
+
         <section id="admin-distributors" class="admin-view">
           <div class="admin-grid">
             <div class="card">
@@ -702,6 +752,55 @@
             <div class="card">
               <div class="card-head"><h2>佣金流水</h2></div>
               <div class="list" id="commission-flow"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="admin-agents" class="admin-view">
+          <div class="admin-grid">
+            <div class="card">
+              <div class="card-head"><h2>代理商账号</h2></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>代理商</th><th>手机号</th><th>活动数</th><th>状态</th><th>操作</th></tr>
+                  </thead>
+                  <tbody id="agent-table"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2 id="agent-form-title">新增代理商</h2></div>
+              <div class="form-grid">
+                <input type="hidden" id="agent-id" />
+                <label class="field">
+                  <span>代理商名称</span>
+                  <input class="input" id="agent-display-name" />
+                </label>
+                <label class="field">
+                  <span>手机号</span>
+                  <input class="input" id="agent-phone" />
+                </label>
+                <label class="field">
+                  <span>登录账号</span>
+                  <input class="input" id="agent-username" />
+                </label>
+                <label class="field">
+                  <span>登录密码</span>
+                  <input class="input" id="agent-password" type="password" placeholder="编辑时不填则不改" />
+                </label>
+                <label class="field">
+                  <span>状态</span>
+                  <select class="select" id="agent-status">
+                    <option value="active">启用</option>
+                    <option value="disabled">禁用</option>
+                  </select>
+                </label>
+              </div>
+              <div class="toolbar">
+                <button class="btn" id="save-agent" type="button">保存代理商</button>
+                <button class="btn ghost" id="reset-agent" type="button">清空</button>
+              </div>
             </div>
           </div>
         </section>
@@ -739,13 +838,75 @@
               </label>
               <label class="field wide" style="display:flex; align-items:center; gap:10px;">
                 <input id="setting-auto-pay" type="checkbox" style="width:18px; height:18px;" />
-                <span>提现审核通过后直接标记为已打款（模拟企业付款到零钱）</span>
+                <span>直接到账活动支付完成后自动出款（微信出款接入后生效；普通提现仍需管理员点击打款）</span>
               </label>
               <div class="field wide">
                 <span>大屏背景音频</span>
                 <div class="image-upload-row">
                   <input class="input" id="setting-screen-audio" placeholder="上传音频后自动生成链接，也可以粘贴音频链接" />
                   <button class="btn ghost compact" type="button" data-upload-target="#setting-screen-audio" data-upload-kind="audio" data-upload-label="上传音频">上传音频</button>
+                </div>
+              </div>
+            </div>
+            <div class="card-head inner-head"><h2>首页配置</h2></div>
+            <div class="form-grid">
+              <label class="field">
+                <span>Hero 眉标</span>
+                <input class="input" id="setting-home-hero-kicker" />
+              </label>
+              <label class="field">
+                <span>Hero 主标题</span>
+                <input class="input" id="setting-home-hero-title" />
+              </label>
+              <label class="field">
+                <span>Hero 强调文案</span>
+                <input class="input" id="setting-home-hero-highlight" />
+              </label>
+              <label class="field">
+                <span>Hero 按钮文案</span>
+                <input class="input" id="setting-home-hero-action-text" />
+              </label>
+              <label class="field wide">
+                <span>Hero 副文案</span>
+                <input class="input" id="setting-home-hero-subtitle" />
+              </label>
+              <label class="field wide">
+                <span>首页 Banner 图（建议 21:9，上传后小程序首页顶部直接展示；不传则显示下面的文案卡片）</span>
+                <div class="image-upload-row">
+                  <input class="input" id="setting-home-hero-image" placeholder="上传图片后自动生成链接，也可以粘贴图片链接" />
+                  <button class="btn ghost compact" type="button" data-upload-target="#setting-home-hero-image" data-preview-target="#setting-home-hero-image-preview">上传图片</button>
+                </div>
+                <div class="image-url-preview" id="setting-home-hero-image-preview"></div>
+              </label>
+              <label class="field">
+                <span>商品区眉标</span>
+                <input class="input" id="setting-home-product-kicker" />
+              </label>
+              <label class="field">
+                <span>商品区标题</span>
+                <input class="input" id="setting-home-product-title" />
+              </label>
+              <label class="field wide">
+                <span>商品区副文案</span>
+                <input class="input" id="setting-home-product-subtitle" />
+              </label>
+              <div class="field full">
+                <div class="field-row-head">
+                  <span>首页入口</span>
+                  <button class="btn ghost compact" type="button" data-add-home-entry>添加入口</button>
+                </div>
+                <div class="editor-table-wrap">
+                  <table class="editor-table">
+                    <thead>
+                      <tr>
+                        <th>入口图标</th>
+                        <th>标题</th>
+                        <th>跳转路径</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="setting-home-entry-rows"></tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -817,7 +978,7 @@
 
     <div class="toast" id="toast"></div>
     <script src="/icons.js?v=20260613-screen1"></script>
-    <script src="/admin.js?v=20260725-upload-clear"></script>
+    <script src="/admin.js?v=20260728-home-config"></script>
   </body>
 </html>
 
