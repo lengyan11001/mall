@@ -41,6 +41,12 @@ async function main() {
   await migrateAcquisition(conn);
   await migrateAddresses(conn);
   await migrateScreenHeartbeats(conn);
+  await addColumnIfMissing(conn, "withdrawals", "paid_at", "TIMESTAMP NULL DEFAULT NULL");
+  await addColumnIfMissing(conn, "withdrawals", "out_bill_no", "VARCHAR(64) NULL");
+  await addColumnIfMissing(conn, "withdrawals", "transfer_bill_no", "VARCHAR(64) NULL");
+  await addColumnIfMissing(conn, "withdrawals", "transfer_state", "VARCHAR(32) NOT NULL DEFAULT ''");
+  await addColumnIfMissing(conn, "withdrawals", "failed_reason", "VARCHAR(255) NOT NULL DEFAULT ''");
+  await addIndexIfMissing(conn, "withdrawals", "uk_withdrawals_out_bill_no", "UNIQUE KEY uk_withdrawals_out_bill_no (out_bill_no)");
   await migratePayments(conn);
   await migrateTenancy(conn);
   await migrateAdminUsers(conn);

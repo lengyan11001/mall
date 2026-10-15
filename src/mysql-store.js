@@ -8,6 +8,8 @@ const {
   createJsapiPrepay,
   jsapiPayParams,
   queryOrder,
+  queryTransfer,
+  transferToBalance,
   yuanToFen
 } = require("./wechat-pay");
 const {
@@ -3648,6 +3650,107 @@ function createStore(pool = createPool()) {
       ORDER BY created_at DESC, id DESC
       LIMIT ${limit}
     `, { appid: scopedAppId, id });
+  }
+
+  // ---- 微信商家转账出款 ----
+  const TRANSFER_SINGLE_LIMIT = Number(process.env.MALL_TRANSFER_SINGLE_LIMIT || 2000);
+
+  function transferOutBillNo(withdrawal) {
+    return `WD${withdrawal.id}T${Date.now()}`.slice(0, 32);
+  }
+
+  async function payoutWithdrawal(withdrawalId, body = {}, appid = "") {
+    const scopedAppId = normalizeAppId(appid || body.appid);
+    const id = assertId(withdrawalId, "提现 ID");
+    const withdrawal = await one(pool, "SELECT * FROM withdrawals WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
+    if (!withdrawal) throw appError(404, "提现申请不存在");
+    if (withdrawal.status === "paidout") throw appError(409, "该提现已出款");
+    if (!["pending", "approved"].includes(withdrawal.status)) throw appError(409, "该提现申请不能打款");
+    const amount = money(withdrawal.amount);
+    if (amount > TRANSFER_SINGLE_LIMIT) {
+      await pool.query(
+        "UPDATE withdrawals SET status = 'approved', review_note = :note WHERE id = :id AND appid = :appid",
+        { note: `金额 ${amount} 元超过自动出款上限 ${TRANSFER_SINGLE_LIMIT} 元，请人工打款`, id, appid: scopedAppId }
+      );
+      throw appError(409, `金额超过 ${TRANSFER_SINGLE_LIMIT} 元，需人工打款`);
+    }
+    const user = await one(pool, "SELECT id, openid FROM users WHERE id = :id AND appid = :appid", {
+      id: Number(withdrawal.user_id),
+      appid: scopedAppId
+    });
+    if (!user || !user.openid) throw appError(422, "该用户缺少 openid，无法自动打款");
+
+    const outBillNo = withdrawal.out_bill_no || transferOutBillNo(withdrawal);
+    await pool.query(
+      "UPDATE withdrawals SET out_bill_no = :outBillNo, transfer_state = 'INIT' WHERE id = :id AND appid = :appid",
+      { outBillNo, id, appid: scopedAppId }
+    );
+
+    let result;
+    try {
+      result = await transferToBalance({
+        outBillNo,
+        openid: user.openid,
+        amountFen: yuanToFen(amount),
+        remark: String(body.remark || "佣金提现到账"),
+        sceneId: process.env.WECHAT_TRANSFER_SCENE_ID || "",
+        perception: process.env.WECHAT_TRANSFER_PERCEPTION || ""
+      }, scopedAppId);
+    } catch (error) {
+      await pool.query(
+        "UPDATE withdrawals SET transfer_state = 'FAIL', failed_reason = :reason WHERE id = :id AND appid = :appid",
+        { reason: String(error.message || "发起转账失败").slice(0, 250), id, appid: scopedAppId }
+      );
+      throw error;
+    }
+
+    const state = String(result.state || "");
+    const paid = state === "SUCCESS";
+    await pool.query(
+      `UPDATE withdrawals
+       SET transfer_bill_no = :billNo, transfer_state = :state, failed_reason = '', status = :status,
+           paid_at = CASE WHEN :status = 'paidout' THEN UTC_TIMESTAMP() ELSE paid_at END,
+           review_note = :note, reviewed_at = UTC_TIMESTAMP()
+       WHERE id = :id AND appid = :appid`,
+      {
+        billNo: String(result.transfer_bill_no || ""),
+        state,
+        status: paid ? "paidout" : "approved",
+        note: paid ? "微信商家转账成功" : `已发起微信转账，等待用户确认（${state || "UNKNOWN"}）`,
+        id,
+        appid: scopedAppId
+      }
+    );
+    return one(pool, "SELECT * FROM withdrawals WHERE id = :id AND appid = :appid", { id, appid: scopedAppId });
+  }
+
+  // 微信商家转账回调：单号对得上就更新提现单
+  async function handleWechatNotifyEvent(payload = {}) {
+    const outBillNo = String(payload.out_bill_no || "");
+    if (!outBillNo || !payload.state) return false;
+    const withdrawal = await one(pool, "SELECT * FROM withdrawals WHERE out_bill_no = :outBillNo", { outBillNo });
+    if (!withdrawal) throw appError(404, `转账单不存在：${outBillNo}`);
+    const state = String(payload.state || "");
+    const billNo = String(payload.transfer_bill_no || "");
+    if (state === "SUCCESS") {
+      await pool.query(
+        `UPDATE withdrawals SET status = 'paidout', transfer_state = :state, transfer_bill_no = :billNo,
+           failed_reason = '', paid_at = UTC_TIMESTAMP(), review_note = '微信商家转账成功', reviewed_at = UTC_TIMESTAMP()
+         WHERE id = :id`,
+        { state, billNo, id: withdrawal.id }
+      );
+    } else if (state === "FAIL") {
+      await pool.query(
+        "UPDATE withdrawals SET transfer_state = :state, transfer_bill_no = :billNo, failed_reason = :reason WHERE id = :id",
+        { state, billNo, reason: String(payload.fail_reason || "微信转账失败").slice(0, 250), id: withdrawal.id }
+      );
+    } else {
+      await pool.query(
+        "UPDATE withdrawals SET transfer_state = :state, transfer_bill_no = :billNo WHERE id = :id",
+        { state, billNo, id: withdrawal.id }
+      );
+    }
+    return true;
   }
 
   async function patchWithdrawal(withdrawalId, body, appid = "") {

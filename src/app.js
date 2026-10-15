@@ -706,6 +706,10 @@ function createServer({ store }) {
         send(res, 401, { code: "FAIL", message: "签名验证失败" });
         return;
       }
+      if (await store.handleWechatNotifyEvent(decoded.resource)) {
+        send(res, 200, { code: "SUCCESS", message: "成功" });
+        return;
+      }
       await store.handleWechatPayNotification(decoded.resource);
       send(res, 200, { code: "SUCCESS", message: "成功" });
       return;
@@ -934,7 +938,10 @@ function createServer({ store }) {
         fail(res, 403, "只有总管理员可以处理提现申请");
         return;
       }
-      ok(res, await store.patchWithdrawal(withdrawalId, await readBody(req), req.admin.appid));
+      const withdrawalBody = await readBody(req);
+      ok(res, withdrawalBody.action === "pay"
+        ? await store.payoutWithdrawal(withdrawalId, withdrawalBody, req.admin.appid)
+        : await store.patchWithdrawal(withdrawalId, withdrawalBody, req.admin.appid));
       return;
     }
 

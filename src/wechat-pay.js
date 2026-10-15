@@ -79,7 +79,7 @@ function authorization(method, pathname, query, body, config) {
   };
 }
 
-function requestWechat(method, apiPath, body = null, tenant) {
+function requestWechat(method, apiPath, body = null, tenant, options = {}) {
   const config = assertConfig(payConfig(tenant));
   const url = new URL(apiPath, "https://api.mch.weixin.qq.com");
   const auth = authorization(method, url.pathname, url.search, body, config);
@@ -94,7 +94,8 @@ function requestWechat(method, apiPath, body = null, tenant) {
         Accept: "application/json",
         "Content-Type": "application/json",
         "User-Agent": "kuaileciyuan-mall/1.0",
-        "Content-Length": Buffer.byteLength(auth.bodyText)
+        "Content-Length": Buffer.byteLength(auth.bodyText),
+        ...(options.usePublicKeyHeader && config.publicKeyId ? { "Wechatpay-Serial": config.publicKeyId } : {})
       }
     }, res => {
       let raw = "";
@@ -206,12 +207,45 @@ async function queryOrder(outTradeNo, tenant) {
   return requestWechat("GET", `/v3/pay/transactions/out-trade-no/${encodeURIComponent(outTradeNo)}?mchid=${encodeURIComponent(config.mchid)}`, null, tenant);
 }
 
+
+// ---- 商家转账到零钱（微信支付 v3）----
+function transferToBalance({ outBillNo, openid, amountFen, remark = "", sceneId = "", perception = "", userName = "", notifyUrl = "" } = {}, tenant) {
+  const config = payConfig(tenant);
+  const body = {
+    appid: config.appid,
+    out_bill_no: String(outBillNo || ""),
+    transfer_scene_id: String(sceneId || process.env.WECHAT_TRANSFER_SCENE_ID || "1001"),
+    openid: String(openid || ""),
+    transfer_amount: Number(amountFen || 0),
+    transfer_remark: String(remark || "佣金到账").slice(0, 32),
+    notify_url: notifyUrl || process.env.WECHAT_TRANSFER_NOTIFY_URL || config.notifyUrl,
+    user_name: String(userName || ""),
+    user_recv_perception: String(perception || process.env.WECHAT_TRANSFER_PERCEPTION || "佣金报酬").slice(0, 32)
+  };
+  if (!body.out_bill_no || !body.openid || !body.transfer_amount) {
+    throw appError(422, "转账参数缺失：out_bill_no / openid / transfer_amount");
+  }
+  return requestWechat("POST", "/v3/fund-app/mch-transfer/transfer-bills", body, tenant, { usePublicKeyHeader: true });
+}
+
+function queryTransfer(outBillNo, tenant) {
+  return requestWechat("GET", `/v3/fund-app/mch-transfer/transfer-bills/out-bill-no/${encodeURIComponent(String(outBillNo || ""))}`, null, tenant);
+}
+
+function cancelTransfer(outBillNo, tenant) {
+  return requestWechat("POST", `/v3/fund-app/mch-transfer/transfer-bills/out-bill-no/${encodeURIComponent(String(outBillNo || ""))}/cancel`, {}, tenant, { usePublicKeyHeader: true });
+}
+
 module.exports = {
+  cancelTransfer,
   createJsapiPrepay,
   decryptResource,
   jsapiPayParams,
   payConfig,
   queryOrder,
+  queryTransfer,
+  requestWechat,
+  transferToBalance,
   verifyWechatpaySignature,
   yuanToFen
 };

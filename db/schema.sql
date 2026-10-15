@@ -388,6 +388,11 @@ CREATE TABLE IF NOT EXISTS withdrawals (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   reviewed_at TIMESTAMP NULL DEFAULT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  paid_at TIMESTAMP NULL DEFAULT NULL,
+  out_bill_no VARCHAR(64) NULL,
+  transfer_bill_no VARCHAR(64) NULL,
+  transfer_state VARCHAR(32) NOT NULL DEFAULT '',
+  failed_reason VARCHAR(255) NOT NULL DEFAULT '',
   KEY idx_withdrawals_user_status (appid, user_id, status),
   KEY idx_withdrawals_status_created (appid, status, created_at),
   CONSTRAINT fk_withdrawals_user FOREIGN KEY (user_id) REFERENCES users(id)
